@@ -7,7 +7,7 @@ from typing import Dict, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 from PySide6.QtCore import QObject, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -119,6 +119,8 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_size = 84
         self.logo_text_align = "center"
         self.logo_text_case = "normal"
+        self.logo_text_force_upper = False
+        self.logo_text_line_spacing = 100
         self.logo_text_color = "#FFFFFF"
         self.upscale_warning_ratio = 1.75
         self.current_preset = "poster"
@@ -236,6 +238,14 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_case_combo.addItem("TOUT EN MAJUSCULES", "upper")
         self.logo_text_case_combo.addItem("TOUT EN PETITES MAJUSCULES", "small_caps")
         self.logo_text_case_combo.currentIndexChanged.connect(self._on_logo_text_case_changed)
+        self.logo_text_upper_check = QCheckBox("Majuscules")
+        self.logo_text_upper_check.toggled.connect(self._on_logo_text_upper_toggled)
+        self.logo_text_line_spacing_spin = QSpinBox()
+        self.logo_text_line_spacing_spin.setRange(50, 300)
+        self.logo_text_line_spacing_spin.setSingleStep(5)
+        self.logo_text_line_spacing_spin.setSuffix(" %")
+        self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
+        self.logo_text_line_spacing_spin.valueChanged.connect(self._on_logo_text_line_spacing_changed)
         self.logo_color_btn = QPushButton("Couleur du logo texte")
         self.logo_color_btn.clicked.connect(self._pick_logo_color)
 
@@ -244,6 +254,8 @@ class ARPlusWindow(QMainWindow):
         form.addRow("Taille", self.logo_text_size_spin)
         form.addRow("Alignement", self.logo_text_align_combo)
         form.addRow("Casse", self.logo_text_case_combo)
+        form.addRow(self.logo_text_upper_check)
+        form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
         resources_layout.addWidget(self.logo_text_checkbox)
         resources_layout.addLayout(form)
         resources_layout.addWidget(self.logo_color_btn)
@@ -389,6 +401,14 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_case = self.logo_text_case_combo.currentData()
         self._refresh_preview()
 
+    def _on_logo_text_upper_toggled(self, checked: bool):
+        self.logo_text_force_upper = checked
+        self._refresh_preview()
+
+    def _on_logo_text_line_spacing_changed(self, value: int):
+        self.logo_text_line_spacing = value
+        self._refresh_preview()
+
     def _logo_effective_size(self) -> int:
         if self.logo_text_case == "small_caps":
             return max(12, int(self.logo_text_size * 0.82))
@@ -400,16 +420,53 @@ class ARPlusWindow(QMainWindow):
 
     def _logo_export_spacing(self) -> int:
         effective_size = self._logo_effective_size()
-        return max(6, effective_size // 8)
+        base_spacing = max(6, effective_size // 8)
+        ratio = max(0.5, min(3.0, self.logo_text_line_spacing / 100))
+        return max(0, int(base_spacing * ratio))
 
     def _logo_font_for_export(self):
         return self._load_logo_font(self._logo_effective_size())
 
     def _logo_display_text(self) -> str:
         text = self.logo_text
-        if self.logo_text_case in {"upper", "small_caps"}:
+        if self.logo_text_force_upper or self.logo_text_case in {"upper", "small_caps"}:
             return text.upper()
         return text
+
+    def _draw_logo_preview_text(self, painter: QPainter, draw_rect, logo_text: str):
+        metrics = QFontMetrics(painter.font())
+        lines: list[str] = []
+        for raw_line in (logo_text.splitlines() or [logo_text]):
+            words = raw_line.split()
+            if not words:
+                lines.append("")
+                continue
+
+            current = words[0]
+            for word in words[1:]:
+                candidate = f"{current} {word}"
+                if metrics.horizontalAdvance(candidate) <= draw_rect.width():
+                    current = candidate
+                    continue
+                lines.append(current)
+                current = word
+            lines.append(current)
+
+        ratio = max(0.5, min(3.0, self.logo_text_line_spacing / 100))
+        line_step = max(1, int(metrics.height() * ratio))
+        block_height = metrics.height() + (line_step * max(0, len(lines) - 1))
+        y = draw_rect.center().y() - (block_height // 2) + metrics.ascent()
+
+        for line in lines:
+            text_w = metrics.horizontalAdvance(line)
+            if self.logo_text_align == "left":
+                x = draw_rect.left()
+            elif self.logo_text_align == "right":
+                x = draw_rect.right() - text_w
+            else:
+                x = draw_rect.center().x() - (text_w // 2)
+            painter.drawText(int(x), int(y), line)
+            y += line_step
 
     def _pick_logo_color(self):
         color = QColorDialog.getColor(QColor(self.logo_text_color), self)
@@ -591,14 +648,7 @@ class ARPlusWindow(QMainWindow):
             font.setBold(True)
             font.setPointSize(self._logo_preview_point_size())
             painter.setFont(font)
-            align_map = {
-                "left": Qt.AlignmentFlag.AlignLeft,
-                "center": Qt.AlignmentFlag.AlignHCenter,
-                "right": Qt.AlignmentFlag.AlignRight,
-            }
-            text_align = align_map.get(self.logo_text_align, Qt.AlignmentFlag.AlignHCenter)
-            flags = text_align | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap
-            painter.drawText(pixmap.rect().adjusted(30, 0, -30, 0), flags, logo_text)
+            self._draw_logo_preview_text(painter, pixmap.rect().adjusted(30, 0, -30, 0), logo_text)
             painter.end()
             base = pixmap
         else:
