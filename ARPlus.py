@@ -433,8 +433,10 @@ class ARPlusWindow(QMainWindow):
 
         if layer_id == "background":
             layer_state["fit_mode"] = "crop"
+        codex/crop-files-format-in-software-os6ylx
             layer_state["transform"]["x"] = width * 0.5
             layer_state["transform"]["y"] = height * 0.5
+         main
             layer_state["transform"]["scale"] = 1.0
         elif layer_id == "character":
             layer_state["fit_mode"] = "crop"
