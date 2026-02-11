@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QObject, QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -63,16 +63,20 @@ PRESETS = {
 @dataclass
 class LayerAsset:
     path: str = ""
-    pixmap: QPixmap = QPixmap()
+    pixmap: QPixmap | None = None
     pil: Image.Image | None = None
 
 
-class LayerGraphicsItem(QGraphicsPixmapItem):
+class SignalEmitter(QObject):
     moved = Signal(str, float, float)
 
+
+class LayerGraphicsItem(QGraphicsPixmapItem):
     def __init__(self, layer_id: str):
         super().__init__()
         self.layer_id = layer_id
+        self.signal_emitter = SignalEmitter()
+        self.moved = self.signal_emitter.moved
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemSendsScenePositionChanges, True)
         self.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
@@ -80,7 +84,7 @@ class LayerGraphicsItem(QGraphicsPixmapItem):
     def itemChange(self, change, value):
         if change == QGraphicsPixmapItem.GraphicsItemChange.ItemPositionHasChanged:
             pos = self.pos()
-            self.moved.emit(self.layer_id, pos.x(), pos.y())
+            self.signal_emitter.moved.emit(self.layer_id, pos.x(), pos.y())
         return super().itemChange(change, value)
 
 
@@ -409,7 +413,8 @@ class ARPlusWindow(QMainWindow):
         self._sync_layer_controls()
 
     def _apply_auto_placement(self, layer_id: str, preset_id: str):
-        if self.assets[layer_id].pixmap.isNull() and layer_id != "logo":
+        layer_pixmap = self.assets[layer_id].pixmap
+        if (layer_pixmap is None or layer_pixmap.isNull()) and layer_id != "logo":
             return
 
         width, height = PRESETS[preset_id]["size"]
@@ -489,7 +494,7 @@ class ARPlusWindow(QMainWindow):
         else:
             base = self.assets[layer_id].pixmap
 
-        if base.isNull():
+        if base is None or base.isNull():
             return QPixmap()
 
         src_w = base.width()
