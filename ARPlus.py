@@ -147,8 +147,8 @@ class ARPlusWindow(QMainWindow):
         state = {}
         for preset_id in PRESETS:
             state[preset_id] = {layer: self._build_default_layer() for layer in LAYER_ORDER}
-            state[preset_id]["background"]["fit_mode"] = "cover"
-            state[preset_id]["character"]["fit_mode"] = "contain"
+            state[preset_id]["background"]["fit_mode"] = "crop"
+            state[preset_id]["character"]["fit_mode"] = "crop"
             state[preset_id]["logo"]["fit_mode"] = "contain"
         return state
 
@@ -234,7 +234,7 @@ class ARPlusWindow(QMainWindow):
         self.scale_slider.valueChanged.connect(self._on_scale_changed)
 
         self.fit_combo = QComboBox()
-        self.fit_combo.addItems(["cover", "contain", "free"])
+        self.fit_combo.addItems(["crop", "contain", "free"])
         self.fit_combo.currentTextChanged.connect(self._on_fit_mode_changed)
 
         reset_btn = QPushButton("Réinitialiser le calque")
@@ -352,7 +352,7 @@ class ARPlusWindow(QMainWindow):
         layer = self._selected_layer()
         self.state[self.current_preset][layer] = self._build_default_layer()
         if layer == "background":
-            self.state[self.current_preset][layer]["fit_mode"] = "cover"
+            self.state[self.current_preset][layer]["fit_mode"] = "crop"
         self._apply_auto_placement(layer, self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
@@ -421,15 +421,15 @@ class ARPlusWindow(QMainWindow):
         layer_state = self._layer_state(preset_id, layer_id)
 
         if layer_id == "background":
-            layer_state["fit_mode"] = "cover"
+            layer_state["fit_mode"] = "crop"
             layer_state["transform"]["x"] = 0
             layer_state["transform"]["y"] = 0
             layer_state["transform"]["scale"] = 1.0
         elif layer_id == "character":
-            layer_state["fit_mode"] = "contain"
+            layer_state["fit_mode"] = "crop"
             layer_state["transform"]["x"] = width * 0.5
-            layer_state["transform"]["y"] = height * 0.95
-            layer_state["transform"]["scale"] = 0.85
+            layer_state["transform"]["y"] = height * 0.8
+            layer_state["transform"]["scale"] = 1.0
         elif layer_id == "logo":
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["scale"] = 0.2
@@ -502,7 +502,7 @@ class ARPlusWindow(QMainWindow):
         if src_w == 0 or src_h == 0:
             return QPixmap()
 
-        if fit_mode == "cover":
+        if fit_mode in {"cover", "crop"}:
             ratio = max(canvas_w / src_w, canvas_h / src_h)
         elif fit_mode == "contain":
             ratio = min(canvas_w / src_w, canvas_h / src_h)
@@ -626,7 +626,7 @@ class ARPlusWindow(QMainWindow):
         if sw == 0 or sh == 0:
             return None
 
-        if fit_mode == "cover":
+        if fit_mode in {"cover", "crop"}:
             ratio = max(canvas_w / sw, canvas_h / sh)
         elif fit_mode == "contain":
             ratio = min(canvas_w / sw, canvas_h / sh)
