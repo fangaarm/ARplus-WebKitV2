@@ -70,6 +70,7 @@ class LayerAsset:
 
 class SignalEmitter(QObject):
     moved = Signal(str, float, float)
+    clicked = Signal(str)
 
 
 class LayerGraphicsItem(QGraphicsPixmapItem):
@@ -78,6 +79,7 @@ class LayerGraphicsItem(QGraphicsPixmapItem):
         self.layer_id = layer_id
         self.signal_emitter = SignalEmitter()
         self.moved = self.signal_emitter.moved
+        self.clicked = self.signal_emitter.clicked
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemSendsScenePositionChanges, True)
         self.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
@@ -87,6 +89,10 @@ class LayerGraphicsItem(QGraphicsPixmapItem):
             pos = self.pos()
             self.signal_emitter.moved.emit(self.layer_id, pos.x(), pos.y())
         return super().itemChange(change, value)
+
+    def mousePressEvent(self, event):
+        self.signal_emitter.clicked.emit(self.layer_id)
+        super().mousePressEvent(event)
 
 
 class CanvasView(QGraphicsView):
@@ -111,9 +117,12 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_enabled = False
         self.logo_text = ""
         self.logo_text_size = 84
+        self.logo_text_align = "center"
+        self.logo_text_case = "normal"
         self.logo_text_color = "#FFFFFF"
         self.upscale_warning_ratio = 1.75
         self.current_preset = "poster"
+        self.active_layer = "background"
         self.updating_ui = False
 
         self.state = self._build_default_state()
@@ -125,17 +134,23 @@ class ARPlusWindow(QMainWindow):
         self.view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         self.view.wheelScaled.connect(self._on_wheel_scaled)
 
+        self.clip_item = QGraphicsRectItem()
+        self.clip_item.setPen(QPen(Qt.PenStyle.NoPen))
+        self.clip_item.setBrush(Qt.BrushStyle.NoBrush)
+        self.clip_item.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
+        self.clip_item.setZValue(-1)
+        self.scene.addItem(self.clip_item)
+
         self.items: Dict[str, LayerGraphicsItem] = {}
         for layer in ["background", "character", "logo"]:
             item = LayerGraphicsItem(layer)
             item.moved.connect(self._on_layer_moved)
-            self.scene.addItem(item)
+            item.clicked.connect(self._on_layer_clicked)
+            item.setParentItem(self.clip_item)
             self.items[layer] = item
 
         self.frame_item = QGraphicsRectItem()
-        frame_pen = QPen(QColor("#C7B082"))
-        frame_pen.setWidth(2)
-        frame_pen.setStyle(Qt.PenStyle.DashLine)
+        frame_pen = QPen(Qt.PenStyle.NoPen)
         self.frame_item.setPen(frame_pen)
         self.frame_item.setBrush(Qt.BrushStyle.NoBrush)
         self.frame_item.setZValue(10_000)
@@ -158,7 +173,7 @@ class ARPlusWindow(QMainWindow):
         for preset_id in PRESETS:
             state[preset_id] = {layer: self._build_default_layer() for layer in LAYER_ORDER}
             state[preset_id]["background"]["fit_mode"] = "crop"
-            state[preset_id]["character"]["fit_mode"] = "crop"
+            state[preset_id]["character"]["fit_mode"] = "contain"
             state[preset_id]["logo"]["fit_mode"] = "contain"
         return state
 
@@ -194,7 +209,7 @@ class ARPlusWindow(QMainWindow):
         bg_btn.clicked.connect(lambda: self._import_layer("background"))
         char_btn = QPushButton("Importer Character")
         char_btn.clicked.connect(lambda: self._import_layer("character"))
-        logo_btn = QPushButton("Importer Logo image")
+        logo_btn = QPushButton("Importer logo")
         logo_btn.clicked.connect(lambda: self._import_layer("logo"))
         resources_layout.addWidget(bg_btn)
         resources_layout.addWidget(char_btn)
@@ -202,19 +217,32 @@ class ARPlusWindow(QMainWindow):
 
         self.logo_text_checkbox = QCheckBox("Logo texte")
         self.logo_text_checkbox.toggled.connect(self._on_logo_text_toggle)
-        self.logo_text_input = QLineEdit()
-        self.logo_text_input.setPlaceholderText("Texte du logo")
+        self.logo_text_input = QPlainTextEdit()
+        self.logo_text_input.setPlaceholderText("Texte du logo (retour ligne possible)")
+        self.logo_text_input.setFixedHeight(70)
         self.logo_text_input.textChanged.connect(self._on_logo_text_changed)
         self.logo_text_size_spin = QSpinBox()
         self.logo_text_size_spin.setRange(12, 600)
         self.logo_text_size_spin.setValue(self.logo_text_size)
         self.logo_text_size_spin.valueChanged.connect(self._on_logo_text_size_changed)
+        self.logo_text_align_combo = QComboBox()
+        self.logo_text_align_combo.addItem("Gauche", "left")
+        self.logo_text_align_combo.addItem("Centre", "center")
+        self.logo_text_align_combo.addItem("Droite", "right")
+        self.logo_text_align_combo.currentIndexChanged.connect(self._on_logo_text_align_changed)
+        self.logo_text_case_combo = QComboBox()
+        self.logo_text_case_combo.addItem("Normal", "normal")
+        self.logo_text_case_combo.addItem("TOUT EN MAJUSCULES", "upper")
+        self.logo_text_case_combo.addItem("TOUT EN PETITES MAJUSCULES", "small_caps")
+        self.logo_text_case_combo.currentIndexChanged.connect(self._on_logo_text_case_changed)
         self.logo_color_btn = QPushButton("Couleur du logo texte")
         self.logo_color_btn.clicked.connect(self._pick_logo_color)
 
         form = QFormLayout()
         form.addRow("Contenu", self.logo_text_input)
         form.addRow("Taille", self.logo_text_size_spin)
+        form.addRow("Alignement", self.logo_text_align_combo)
+        form.addRow("Casse", self.logo_text_case_combo)
         resources_layout.addWidget(self.logo_text_checkbox)
         resources_layout.addLayout(form)
         resources_layout.addWidget(self.logo_color_btn)
@@ -223,11 +251,14 @@ class ARPlusWindow(QMainWindow):
 
         layer_box = QGroupBox("Contrôles de calque")
         layer_layout = QFormLayout(layer_box)
-        self.layer_combo = QComboBox()
-        for layer in ["background", "character", "logo"]:
-            layer_layout_label = {"background": "Background", "character": "Character", "logo": "Logo"}[layer]
-            self.layer_combo.addItem(layer_layout_label, layer)
-        self.layer_combo.currentIndexChanged.connect(self._sync_layer_controls)
+        layer_buttons_row = QHBoxLayout()
+        self.layer_buttons: Dict[str, QPushButton] = {}
+        for layer, label in [("character", "Personnage"), ("background", "Background"), ("logo", "Logo")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _checked, lid=layer: self._set_active_layer(lid))
+            self.layer_buttons[layer] = btn
+            layer_buttons_row.addWidget(btn)
 
         self.visible_check = QCheckBox("Visible")
         self.visible_check.setChecked(True)
@@ -243,19 +274,15 @@ class ARPlusWindow(QMainWindow):
         self.scale_slider.setValue(100)
         self.scale_slider.valueChanged.connect(self._on_scale_changed)
 
-        self.fit_combo = QComboBox()
-        self.fit_combo.addItems(["crop", "contain", "free"])
-        self.fit_combo.currentTextChanged.connect(self._on_fit_mode_changed)
-
         reset_btn = QPushButton("Réinitialiser le calque")
         reset_btn.clicked.connect(self._on_reset_layer)
 
-        layer_layout.addRow("Calque", self.layer_combo)
+        layer_layout.addRow("Calque", layer_buttons_row)
         layer_layout.addRow(self.visible_check)
         layer_layout.addRow("Opacité", self.opacity_slider)
         layer_layout.addRow("Échelle", self.scale_slider)
-        layer_layout.addRow("Mode", self.fit_combo)
         layer_layout.addRow(reset_btn)
+        self._set_active_layer(self.active_layer, sync=False)
         layout.addWidget(layer_box)
         layout.addStretch(1)
         return panel
@@ -303,11 +330,12 @@ class ARPlusWindow(QMainWindow):
     def _set_scene_for_preset(self, preset_id: str):
         width, height = PRESETS[preset_id]["size"]
         self.scene.setSceneRect(0, 0, width, height)
+        self.clip_item.setRect(0, 0, width, height)
         self.frame_item.setRect(0, 0, width, height)
         self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _selected_layer(self) -> str:
-        return self.layer_combo.currentData()
+        return self.active_layer
 
     def _layer_state(self, preset_id: str, layer_id: str):
         return self.state[preset_id][layer_id]
@@ -317,6 +345,9 @@ class ARPlusWindow(QMainWindow):
 
     def _on_preset_changed(self):
         self.current_preset = self.preset_combo.currentData()
+        if not self._is_layer_allowed(self.current_preset, self.active_layer):
+            fallback = "logo" if self.current_preset == "logo" else "background"
+            self._set_active_layer(fallback, sync=False)
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
@@ -325,13 +356,43 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_enabled = checked
         self._refresh_preview()
 
-    def _on_logo_text_changed(self, text: str):
-        self.logo_text = text
+    def _on_logo_text_changed(self):
+        self.logo_text = self.logo_text_input.toPlainText().strip()
         self._refresh_preview()
 
     def _on_logo_text_size_changed(self, value: int):
         self.logo_text_size = value
         self._refresh_preview()
+
+    def _on_logo_text_align_changed(self):
+        self.logo_text_align = self.logo_text_align_combo.currentData()
+        self._refresh_preview()
+
+    def _on_logo_text_case_changed(self):
+        self.logo_text_case = self.logo_text_case_combo.currentData()
+        self._refresh_preview()
+
+    def _logo_effective_size(self) -> int:
+        if self.logo_text_case == "small_caps":
+            return max(12, int(self.logo_text_size * 0.82))
+        return self.logo_text_size
+
+    def _logo_preview_point_size(self) -> int:
+        effective_size = self._logo_effective_size()
+        return max(16, int(effective_size / 3))
+
+    def _logo_export_spacing(self) -> int:
+        effective_size = self._logo_effective_size()
+        return max(6, effective_size // 8)
+
+    def _logo_font_for_export(self):
+        return self._load_logo_font(self._logo_effective_size())
+
+    def _logo_display_text(self) -> str:
+        text = self.logo_text
+        if self.logo_text_case in {"upper", "small_caps"}:
+            return text.upper()
+        return text
 
     def _pick_logo_color(self):
         color = QColorDialog.getColor(QColor(self.logo_text_color), self)
@@ -354,11 +415,6 @@ class ARPlusWindow(QMainWindow):
         self._layer_state(self.current_preset, layer)["transform"]["scale"] = value / 100
         self._refresh_preview()
 
-    def _on_fit_mode_changed(self, text: str):
-        layer = self._selected_layer()
-        self._layer_state(self.current_preset, layer)["fit_mode"] = text
-        self._refresh_preview()
-
     def _on_reset_layer(self):
         layer = self._selected_layer()
         self.state[self.current_preset][layer] = self._build_default_layer()
@@ -379,18 +435,42 @@ class ARPlusWindow(QMainWindow):
         self._refresh_preview()
         self._sync_layer_controls()
 
+    def _on_layer_clicked(self, layer_id: str):
+        self._set_active_layer(layer_id)
+
+    def _set_active_layer(self, layer_id: str, sync: bool = True):
+        if layer_id not in {"background", "character", "logo"}:
+            return
+        self.active_layer = layer_id
+        for lid, btn in self.layer_buttons.items():
+            btn.setChecked(lid == layer_id)
+        if sync:
+            self._sync_layer_controls()
+
+    def _is_layer_allowed(self, preset_id: str, layer_id: str) -> bool:
+        if preset_id == "logo":
+            return layer_id == "logo"
+        if layer_id == "logo" and PRESETS[preset_id].get("skip_logo"):
+            return False
+        return True
+
     def _sync_layer_controls(self):
         if self.updating_ui:
             return
         self.updating_ui = True
         layer = self._selected_layer()
+        if not self._is_layer_allowed(self.current_preset, layer):
+            for fallback in ["logo", "background", "character"]:
+                if self._is_layer_allowed(self.current_preset, fallback):
+                    self._set_active_layer(fallback, sync=False)
+                    layer = fallback
+                    break
+        for lid, btn in self.layer_buttons.items():
+            btn.setEnabled(self._is_layer_allowed(self.current_preset, lid))
         layer_state = self._layer_state(self.current_preset, layer)
         self.visible_check.setChecked(layer_state["visible"])
         self.opacity_slider.setValue(int(layer_state["opacity"] * 100))
         self.scale_slider.setValue(int(layer_state["transform"]["scale"] * 100))
-        fit_idx = self.fit_combo.findText(layer_state["fit_mode"])
-        if fit_idx >= 0:
-            self.fit_combo.setCurrentIndex(fit_idx)
         self.updating_ui = False
 
     def _import_layer(self, layer_id: str):
@@ -433,15 +513,13 @@ class ARPlusWindow(QMainWindow):
 
         if layer_id == "background":
             layer_state["fit_mode"] = "crop"
-        codex/crop-files-format-in-software-os6ylx
             layer_state["transform"]["x"] = width * 0.5
             layer_state["transform"]["y"] = height * 0.5
-         main
             layer_state["transform"]["scale"] = 1.0
         elif layer_id == "character":
-            layer_state["fit_mode"] = "crop"
+            layer_state["fit_mode"] = "contain"
             layer_state["transform"]["x"] = width * 0.5
-            layer_state["transform"]["y"] = height * 0.8
+            layer_state["transform"]["y"] = height * 0.5
             layer_state["transform"]["scale"] = 1.0
         elif layer_id == "logo":
             layer_state["fit_mode"] = "contain"
@@ -449,11 +527,8 @@ class ARPlusWindow(QMainWindow):
             if preset_id == "poster":
                 layer_state["transform"]["x"] = width * 0.5
                 layer_state["transform"]["y"] = height * 0.1
-            elif preset_id == "hero":
-                layer_state["transform"]["x"] = width * 0.22
-                layer_state["transform"]["y"] = height * 0.18
             else:
-                layer_state["transform"]["x"] = width * 0.5
+                layer_state["transform"]["x"] = width * 0.14
                 layer_state["transform"]["y"] = height * 0.15
 
     def _refresh_preview(self):
@@ -463,10 +538,10 @@ class ARPlusWindow(QMainWindow):
         for layer in ["background", "character", "logo"]:
             item = self.items[layer]
             layer_state = self._layer_state(self.current_preset, layer)
-            if not layer_state["visible"]:
+            if not self._is_layer_allowed(self.current_preset, layer):
                 item.setVisible(False)
                 continue
-            if layer == "logo" and self.current_preset == "background_no_logo":
+            if not layer_state["visible"]:
                 item.setVisible(False)
                 continue
 
@@ -490,15 +565,23 @@ class ARPlusWindow(QMainWindow):
         scale = layer_state["transform"]["scale"]
 
         if layer_id == "logo" and self.logo_text_enabled and self.logo_text:
+            logo_text = self._logo_display_text()
             pixmap = QPixmap(1200, 300)
             pixmap.fill(Qt.GlobalColor.transparent)
             painter = QPainter(pixmap)
             painter.setPen(QColor(self.logo_text_color))
             font = painter.font()
             font.setBold(True)
-            font.setPointSize(max(16, int(self.logo_text_size / 3)))
+            font.setPointSize(self._logo_preview_point_size())
             painter.setFont(font)
-            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, self.logo_text)
+            align_map = {
+                "left": Qt.AlignmentFlag.AlignLeft,
+                "center": Qt.AlignmentFlag.AlignHCenter,
+                "right": Qt.AlignmentFlag.AlignRight,
+            }
+            text_align = align_map.get(self.logo_text_align, Qt.AlignmentFlag.AlignHCenter)
+            flags = text_align | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap
+            painter.drawText(pixmap.rect().adjusted(30, 0, -30, 0), flags, logo_text)
             painter.end()
             base = pixmap
         else:
@@ -546,7 +629,7 @@ class ARPlusWindow(QMainWindow):
         export_dir = Path(self.export_dir.text()).expanduser()
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        base_name = self.base_name_input.text().strip() or "Name"
+        base_name = self._sanitize_base_name(self.base_name_input.text())
         self.progress.setValue(0)
         total = len(selected)
 
@@ -565,7 +648,7 @@ class ARPlusWindow(QMainWindow):
         canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
         for layer in ["background", "character", "logo"]:
-            if layer == "logo" and preset.get("skip_logo"):
+            if not self._is_layer_allowed(preset_id, layer):
                 continue
 
             layer_state = self._layer_state(preset_id, layer)
@@ -595,7 +678,7 @@ class ARPlusWindow(QMainWindow):
 
         file_stub = preset["filename"]
         ext = "png" if preset.get("png") else "jpg"
-        file_name = f'{file_stub}-"{base_name}".{ext}'
+        file_name = f"{file_stub}-{base_name}.{ext}"
         out_path = export_dir / file_name
 
         if ext == "jpg":
@@ -612,15 +695,30 @@ class ARPlusWindow(QMainWindow):
         scale = state["transform"]["scale"]
 
         if layer_id == "logo" and self.logo_text_enabled and self.logo_text:
+            logo_text = self._logo_display_text()
             img = Image.new("RGBA", (2400, 600), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
-            font = self._load_logo_font()
-            bbox = draw.textbbox((0, 0), self.logo_text, font=font)
+            font = self._logo_font_for_export()
+            spacing = self._logo_export_spacing()
+            pil_align = self.logo_text_align
+            bbox = draw.multiline_textbbox((0, 0), logo_text, font=font, align=pil_align, spacing=spacing)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            x = (img.width - text_w) // 2
+            if pil_align == "left":
+                x = int(img.width * 0.08)
+            elif pil_align == "right":
+                x = int(img.width * 0.92) - text_w
+            else:
+                x = (img.width - text_w) // 2
             y = (img.height - text_h) // 2
-            draw.text((x, y), self.logo_text, fill=self.logo_text_color, font=font)
+            draw.multiline_text(
+                (x, y),
+                logo_text,
+                fill=self.logo_text_color,
+                font=font,
+                align=pil_align,
+                spacing=spacing,
+            )
             source = img
         else:
             source = self.assets[layer_id].pil
@@ -643,7 +741,8 @@ class ARPlusWindow(QMainWindow):
         target_size = (max(1, int(sw * ratio)), max(1, int(sh * ratio)))
         return source.resize(target_size, Image.Resampling.LANCZOS)
 
-    def _load_logo_font(self):
+    def _load_logo_font(self, size: int | None = None):
+        font_size = size if size is not None else self.logo_text_size
         font_candidates = [
             "Montserrat-Bold.ttf",
             "/usr/share/fonts/truetype/montserrat/Montserrat-Bold.ttf",
@@ -652,11 +751,18 @@ class ARPlusWindow(QMainWindow):
         ]
         for candidate in font_candidates:
             try:
-                return ImageFont.truetype(candidate, self.logo_text_size)
+                return ImageFont.truetype(candidate, font_size)
             except OSError:
                 continue
         self._log("Avertissement: Montserrat Bold introuvable, police de secours utilisée.")
         return ImageFont.load_default()
+
+
+    def _sanitize_base_name(self, raw_name: str) -> str:
+        name = (raw_name or "").strip()
+        cleaned = "".join(ch for ch in name if ch not in '<>:"/\\|?*')
+        cleaned = cleaned.strip().strip(".")
+        return cleaned or "Name"
 
 
 def main():
