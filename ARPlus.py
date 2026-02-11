@@ -7,7 +7,7 @@ from typing import Dict, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 from PySide6.QtCore import QObject, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGraphicsPixmapItem,
+    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
     QGroupBox,
@@ -131,6 +132,15 @@ class ARPlusWindow(QMainWindow):
             self.scene.addItem(item)
             self.items[layer] = item
 
+        self.frame_item = QGraphicsRectItem()
+        frame_pen = QPen(QColor("#C7B082"))
+        frame_pen.setWidth(2)
+        frame_pen.setStyle(Qt.PenStyle.DashLine)
+        self.frame_item.setPen(frame_pen)
+        self.frame_item.setBrush(Qt.BrushStyle.NoBrush)
+        self.frame_item.setZValue(10_000)
+        self.scene.addItem(self.frame_item)
+
         self._build_ui()
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
@@ -147,8 +157,8 @@ class ARPlusWindow(QMainWindow):
         state = {}
         for preset_id in PRESETS:
             state[preset_id] = {layer: self._build_default_layer() for layer in LAYER_ORDER}
-            state[preset_id]["background"]["fit_mode"] = "cover"
-            state[preset_id]["character"]["fit_mode"] = "contain"
+            state[preset_id]["background"]["fit_mode"] = "crop"
+            state[preset_id]["character"]["fit_mode"] = "crop"
             state[preset_id]["logo"]["fit_mode"] = "contain"
         return state
 
@@ -234,7 +244,7 @@ class ARPlusWindow(QMainWindow):
         self.scale_slider.valueChanged.connect(self._on_scale_changed)
 
         self.fit_combo = QComboBox()
-        self.fit_combo.addItems(["cover", "contain", "free"])
+        self.fit_combo.addItems(["crop", "contain", "free"])
         self.fit_combo.currentTextChanged.connect(self._on_fit_mode_changed)
 
         reset_btn = QPushButton("Réinitialiser le calque")
@@ -293,6 +303,7 @@ class ARPlusWindow(QMainWindow):
     def _set_scene_for_preset(self, preset_id: str):
         width, height = PRESETS[preset_id]["size"]
         self.scene.setSceneRect(0, 0, width, height)
+        self.frame_item.setRect(0, 0, width, height)
         self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _selected_layer(self) -> str:
@@ -352,7 +363,7 @@ class ARPlusWindow(QMainWindow):
         layer = self._selected_layer()
         self.state[self.current_preset][layer] = self._build_default_layer()
         if layer == "background":
-            self.state[self.current_preset][layer]["fit_mode"] = "cover"
+            self.state[self.current_preset][layer]["fit_mode"] = "crop"
         self._apply_auto_placement(layer, self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
@@ -421,15 +432,15 @@ class ARPlusWindow(QMainWindow):
         layer_state = self._layer_state(preset_id, layer_id)
 
         if layer_id == "background":
-            layer_state["fit_mode"] = "cover"
-            layer_state["transform"]["x"] = 0
-            layer_state["transform"]["y"] = 0
+            layer_state["fit_mode"] = "crop"
+            layer_state["transform"]["x"] = width * 0.5
+            layer_state["transform"]["y"] = height * 0.5
             layer_state["transform"]["scale"] = 1.0
         elif layer_id == "character":
-            layer_state["fit_mode"] = "contain"
+            layer_state["fit_mode"] = "crop"
             layer_state["transform"]["x"] = width * 0.5
-            layer_state["transform"]["y"] = height * 0.95
-            layer_state["transform"]["scale"] = 0.85
+            layer_state["transform"]["y"] = height * 0.8
+            layer_state["transform"]["scale"] = 1.0
         elif layer_id == "logo":
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["scale"] = 0.2
@@ -468,11 +479,8 @@ class ARPlusWindow(QMainWindow):
 
             pos_x = layer_state["transform"]["x"]
             pos_y = layer_state["transform"]["y"]
-            if layer == "background":
-                item.setPos(pos_x, pos_y)
-            else:
-                item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
-                item.setPos(pos_x, pos_y)
+            item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+            item.setPos(pos_x, pos_y)
 
     def _preview_pixmap(self, layer_id: str, canvas_w: int, canvas_h: int) -> QPixmap:
         layer_state = self._layer_state(self.current_preset, layer_id)
@@ -502,7 +510,7 @@ class ARPlusWindow(QMainWindow):
         if src_w == 0 or src_h == 0:
             return QPixmap()
 
-        if fit_mode == "cover":
+        if fit_mode in {"cover", "crop"}:
             ratio = max(canvas_w / src_w, canvas_h / src_h)
         elif fit_mode == "contain":
             ratio = min(canvas_w / src_w, canvas_h / src_h)
@@ -567,12 +575,8 @@ class ARPlusWindow(QMainWindow):
                 continue
 
             lw, lh = rendered.size
-            if layer == "background":
-                x = int(layer_state["transform"]["x"])
-                y = int(layer_state["transform"]["y"])
-            else:
-                x = int(layer_state["transform"]["x"] - lw / 2)
-                y = int(layer_state["transform"]["y"] - lh / 2)
+            x = int(layer_state["transform"]["x"] - lw / 2)
+            y = int(layer_state["transform"]["y"] - lh / 2)
 
             if self.assets[layer].pil and layer != "logo":
                 sw, sh = self.assets[layer].pil.size
@@ -626,7 +630,7 @@ class ARPlusWindow(QMainWindow):
         if sw == 0 or sh == 0:
             return None
 
-        if fit_mode == "cover":
+        if fit_mode in {"cover", "crop"}:
             ratio = max(canvas_w / sw, canvas_h / sh)
         elif fit_mode == "contain":
             ratio = min(canvas_w / sw, canvas_h / sh)
