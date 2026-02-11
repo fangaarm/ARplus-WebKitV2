@@ -132,11 +132,12 @@ class ARPlusWindow(QMainWindow):
         self.view.setScene(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        self.view.setBackgroundBrush(QColor("#F3F1F3"))
         self.view.wheelScaled.connect(self._on_wheel_scaled)
 
         self.clip_item = QGraphicsRectItem()
         self.clip_item.setPen(QPen(Qt.PenStyle.NoPen))
-        self.clip_item.setBrush(Qt.BrushStyle.NoBrush)
+        self.clip_item.setBrush(QColor("#FFDDEB"))
         self.clip_item.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
         self.clip_item.setZValue(-1)
         self.scene.addItem(self.clip_item)
@@ -332,7 +333,23 @@ class ARPlusWindow(QMainWindow):
         self.scene.setSceneRect(0, 0, width, height)
         self.clip_item.setRect(0, 0, width, height)
         self.frame_item.setRect(0, 0, width, height)
-        self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._fit_view_to_scene()
+
+    def _fit_view_to_scene(self):
+        scene_rect = self.scene.sceneRect()
+        if scene_rect.width() <= 0 or scene_rect.height() <= 0:
+            return
+        self.view.resetTransform()
+        self.view.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self.view.centerOn(scene_rect.center())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_view_to_scene()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_view_to_scene()
 
     def _selected_layer(self) -> str:
         return self.active_layer
