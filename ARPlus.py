@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
-from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, Qt, Signal
+from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -66,8 +66,6 @@ POSTER_TEXTBOX_BASE = {
     "min_width": 120,
     "padding_left": 28,
     "radius": 12,
-    "bevel_size": 4,
-    "bevel_strength": 130,
     "font_size": 72,
     "fill_color": "#0B5FA6",
     "text_color": "#F2F3EE",
@@ -157,6 +155,22 @@ class CanvasView(QGraphicsView):
         super().wheelEvent(event)
 
 
+class PresetPreviewLabel(QLabel):
+    clicked = Signal(str)
+
+    def __init__(self, preset_id: str, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self.preset_id = preset_id
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.preset_id)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class ARPlusWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -190,6 +204,11 @@ class ARPlusWindow(QMainWindow):
         self.guides_opacity = GUIDE_OPACITY_DEFAULT
         self.poster_guide_variant = "1"
         self.upscale_warning_ratio = 1.75
+        self.presets_preview_interval_ms = 2400
+        self.presets_preview_worker_interval_ms = 12
+        self.presets_preview_box_width = 300
+        self.presets_preview_box_height = 170
+        self.presets_preview_quality_scale = 0.45
         self.current_preset = "poster"
         self.active_layer = "background"
         self.updating_ui = False
@@ -197,6 +216,8 @@ class ARPlusWindow(QMainWindow):
         self.autosave_dir = self.program_root / "autosafe"
         self.guide_pixmaps: Dict[str, QPixmap] = {}
         self.guide_regions: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {}
+        self.preset_preview_dirty: set[str] = set(PRESETS.keys())
+        self.preset_preview_queue: list[str] = []
         app_icon_path = self.program_root / "asset" / "icon.ico"
         if app_icon_path.exists():
             app_icon = QIcon(str(app_icon_path))
@@ -204,6 +225,12 @@ class ARPlusWindow(QMainWindow):
                 self.setWindowIcon(app_icon)
 
         self.state = self._build_default_state()
+        self.presets_preview_timer = QTimer(self)
+        self.presets_preview_timer.setSingleShot(True)
+        self.presets_preview_timer.timeout.connect(self._refresh_presets_preview_strip)
+        self.presets_preview_worker_timer = QTimer(self)
+        self.presets_preview_worker_timer.setSingleShot(True)
+        self.presets_preview_worker_timer.timeout.connect(self._process_next_preset_preview)
 
         self.scene = QGraphicsScene(self)
         self.view = CanvasView(self)
@@ -286,7 +313,8 @@ class ARPlusWindow(QMainWindow):
     def _build_ui(self):
         root = QWidget(self)
         self.setCentralWidget(root)
-        layout = QHBoxLayout(root)
+        layout = QVBoxLayout(root)
+        top_layout = QHBoxLayout()
 
         self.left_panel = self._build_left_panel()
         self.left_panel.setMinimumWidth(380)
@@ -295,7 +323,7 @@ class ARPlusWindow(QMainWindow):
         self.left_scroll.setWidget(self.left_panel)
         self.left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        layout.addWidget(self.left_scroll, 1)
+        top_layout.addWidget(self.left_scroll, 1)
 
         center = QVBoxLayout()
         top_row = QHBoxLayout()
@@ -308,7 +336,7 @@ class ARPlusWindow(QMainWindow):
         top_row.addStretch(1)
         center.addLayout(top_row)
         center.addWidget(self.view, 1)
-        layout.addLayout(center, 3)
+        top_layout.addLayout(center, 3)
 
         self.right_panel = self._build_right_panel()
         self.right_panel.setMinimumWidth(360)
@@ -317,8 +345,12 @@ class ARPlusWindow(QMainWindow):
         self.right_scroll.setWidget(self.right_panel)
         self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        layout.addWidget(self.right_scroll, 1)
+        top_layout.addWidget(self.right_scroll, 1)
+
+        layout.addLayout(top_layout, 1)
+        layout.addWidget(self._build_presets_preview_strip())
         self._apply_responsive_side_widths()
+        self._request_presets_preview_refresh(force=True)
 
     def _apply_responsive_side_widths(self):
         if not hasattr(self, "left_scroll") or not hasattr(self, "right_scroll"):
@@ -613,6 +645,43 @@ class ARPlusWindow(QMainWindow):
         self._update_position_info()
         return panel
 
+    def _build_presets_preview_strip(self):
+        box = QGroupBox("Preview presets (mise a jour auto)")
+        box_layout = QVBoxLayout(box)
+        self.presets_preview_scroll = QScrollArea()
+        self.presets_preview_scroll.setWidgetResizable(True)
+        self.presets_preview_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.presets_preview_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(8, 8, 8, 8)
+        row.setSpacing(12)
+        self.preset_preview_labels: Dict[str, QLabel] = {}
+
+        for preset_id, meta in PRESETS.items():
+            card = QWidget()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(4)
+            thumb = PresetPreviewLabel(preset_id, "...")
+            thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            thumb.setFixedSize(self.presets_preview_box_width, self.presets_preview_box_height)
+            thumb.setStyleSheet("border: 1px solid #5E5E66; background-color: #1F1F24;")
+            thumb.clicked.connect(self._on_preset_preview_clicked)
+            title = PresetPreviewLabel(preset_id, meta["label"])
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title.clicked.connect(self._on_preset_preview_clicked)
+            card_layout.addWidget(thumb)
+            card_layout.addWidget(title)
+            row.addWidget(card)
+            self.preset_preview_labels[preset_id] = thumb
+
+        row.addStretch(1)
+        self.presets_preview_scroll.setWidget(container)
+        box_layout.addWidget(self.presets_preview_scroll)
+        return box
+
     def _set_scene_for_preset(self, preset_id: str):
         width, height = PRESETS[preset_id]["size"]
         self.scene.setSceneRect(0, 0, width, height)
@@ -663,6 +732,17 @@ class ARPlusWindow(QMainWindow):
         self._refresh_preview()
         self._sync_layer_controls()
         self._sync_poster_textbox_controls()
+        self._refresh_presets_preview_borders()
+
+    def _on_preset_preview_clicked(self, preset_id: str):
+        index = self.preset_combo.findData(preset_id)
+        if index < 0:
+            return
+        if self.preset_combo.currentIndex() != index:
+            self.preset_combo.setCurrentIndex(index)
+        else:
+            self._on_preset_changed()
+        self._refresh_presets_preview_borders()
 
     def _on_guides_visible_toggled(self, checked: bool):
         self.guides_visible = checked
@@ -681,36 +761,44 @@ class ARPlusWindow(QMainWindow):
             if layer_pixmap is None or layer_pixmap.isNull():
                 continue
             self._apply_auto_placement(layer_id, "poster")
+        self._invalidate_presets_preview(["poster"])
         self._refresh_preview()
         self._sync_layer_controls()
 
     def _on_logo_text_toggle(self, checked: bool):
         self.logo_text_enabled = checked
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_text_changed(self):
         self.logo_text = self.logo_text_input.toPlainText().strip()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_text_size_changed(self, value: int):
         self.logo_text_size = value
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_text_align_changed(self):
         self.logo_text_align = self.logo_text_align_combo.currentData()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_text_upper_toggled(self, checked: bool):
         self.logo_text_force_upper = checked
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_text_line_spacing_changed(self, value: int):
         self.logo_text_line_spacing = value
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_poster_textbox_toggled(self, checked: bool):
         self.poster_textbox_enabled = checked
         self._sync_poster_textbox_controls()
+        self._invalidate_presets_preview(["poster"])
         self._refresh_preview()
 
     def _on_poster_textbox_changed(self, value: str):
@@ -720,50 +808,61 @@ class ARPlusWindow(QMainWindow):
             self.poster_textbox_input.setText(upper_value)
             self.poster_textbox_input.blockSignals(False)
         self.poster_textbox_text = upper_value
+        self._invalidate_presets_preview(["poster"])
         self._refresh_preview()
 
     def _on_logo_shadow_toggled(self, checked: bool):
         self.logo_shadow_enabled = checked
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_shadow_distance_changed(self, value: int):
         self.logo_shadow_distance = value
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_shadow_blur_changed(self, value: int):
         self.logo_shadow_blur = value
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_shadow_angle_changed(self, value: int):
         self.logo_shadow_angle = value % 360
         self._update_shadow_slider_labels()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_logo_shadow_opacity_changed(self, value: int):
         self.logo_shadow_opacity = value
         self._update_shadow_slider_labels()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_gradient_enabled_toggled(self, checked: bool):
         self.gradient_enabled = checked
         self._sync_gradient_controls()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_gradient_mode_changed(self):
         self.gradient_mode = self.gradient_mode_combo.currentData()
         self._sync_gradient_controls()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_gradient_direction_changed(self):
         self.gradient_direction = self.gradient_direction_combo.currentData()
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_gradient_distance_changed(self, value: int):
         self.gradient_distance = value
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _on_gradient_stretch_changed(self, value: int):
         self.gradient_stretch = value
+        self._invalidate_presets_preview()
         self._refresh_preview()
 
     def _update_shadow_slider_labels(self):
@@ -1089,11 +1188,6 @@ class ARPlusWindow(QMainWindow):
         )
         # Keep the right side rounded but force a straight left edge.
         draw.rectangle((0, 0, min(radius, width - 1), height - 1), fill=fill_color)
-        box_img = self._apply_alpha_bevel(
-            box_img,
-            bevel_size=max(1, int(base["bevel_size"] * scale)),
-            bevel_strength=base["bevel_strength"],
-        )
         draw = ImageDraw.Draw(box_img)
         text_x = padding_left
         text_y = int(round((height - text_h) * 0.5 - bbox[1]))
@@ -1104,36 +1198,6 @@ class ARPlusWindow(QMainWindow):
             font=font,
         )
         return box_img, x, y
-
-    def _apply_alpha_bevel(self, image: Image.Image, bevel_size: int, bevel_strength: int):
-        if bevel_size <= 0 or bevel_strength <= 0:
-            return image
-        alpha = image.getchannel("A")
-        filter_size = max(3, (bevel_size * 2) + 1)
-        inner_alpha = alpha.filter(ImageFilter.MinFilter(size=filter_size))
-        edge_alpha = ImageChops.subtract(alpha, inner_alpha)
-        if edge_alpha.getbbox() is None:
-            return image
-
-        blurred = alpha.filter(ImageFilter.GaussianBlur(radius=bevel_size))
-        light_raw = ImageChops.subtract(alpha, ImageChops.offset(blurred, bevel_size, bevel_size))
-        dark_raw = ImageChops.subtract(alpha, ImageChops.offset(blurred, -bevel_size, -bevel_size))
-        light_alpha = ImageChops.multiply(light_raw, edge_alpha).point(
-            lambda px: int(min(255, (px * bevel_strength) / 255))
-        )
-        dark_alpha = ImageChops.multiply(dark_raw, edge_alpha).point(
-            lambda px: int(min(255, (px * (bevel_strength * 0.9)) / 255))
-        )
-
-        result = image.copy()
-        shadow = Image.new("RGBA", result.size, (0, 0, 0, 0))
-        shadow.putalpha(dark_alpha)
-        result.alpha_composite(shadow)
-
-        highlight = Image.new("RGBA", result.size, (255, 255, 255, 0))
-        highlight.putalpha(light_alpha)
-        result.alpha_composite(highlight)
-        return result
 
     def _refresh_poster_textbox_overlay(self, canvas_w: int, canvas_h: int):
         if not hasattr(self, "poster_textbox_item"):
@@ -1156,24 +1220,28 @@ class ARPlusWindow(QMainWindow):
         color = QColorDialog.getColor(QColor(self.logo_text_color), self)
         if color.isValid():
             self.logo_text_color = color.name()
+            self._invalidate_presets_preview()
             self._refresh_preview()
 
     def _pick_logo_shadow_color(self):
         color = QColorDialog.getColor(QColor(self.logo_shadow_color), self)
         if color.isValid():
             self.logo_shadow_color = color.name()
+            self._invalidate_presets_preview()
             self._refresh_preview()
 
     def _pick_gradient_color_a(self):
         color = QColorDialog.getColor(QColor(self.gradient_color_a), self)
         if color.isValid():
             self.gradient_color_a = color.name()
+            self._invalidate_presets_preview()
             self._refresh_preview()
 
     def _pick_gradient_color_b(self):
         color = QColorDialog.getColor(QColor(self.gradient_color_b), self)
         if color.isValid():
             self.gradient_color_b = color.name()
+            self._invalidate_presets_preview()
             self._refresh_preview()
 
     def _on_visible_changed(self, checked: bool):
@@ -1225,6 +1293,7 @@ class ARPlusWindow(QMainWindow):
         self._layer_state(self.current_preset, layer_id)["transform"]["x"] = x
         self._layer_state(self.current_preset, layer_id)["transform"]["y"] = y
         self._update_position_info()
+        self._request_presets_preview_refresh(preset_ids=[self.current_preset])
 
     def _on_wheel_scaled(self, delta: float):
         layer = self._selected_layer()
@@ -1298,6 +1367,7 @@ class ARPlusWindow(QMainWindow):
         for preset_id in PRESETS:
             self._apply_auto_placement(layer_id, preset_id)
 
+        self._invalidate_presets_preview()
         self._log(f"Import {layer_id}: {file_path}")
         self._refresh_preview()
         self._sync_layer_controls()
@@ -1340,9 +1410,23 @@ class ARPlusWindow(QMainWindow):
                 return
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["scale"] = 1.0
-            layer_state["transform"]["x"] = width * 0.5
-            layer_state["transform"]["y"] = height * 0.5
             layer_state["transform"]["anchor"] = "center"
+            if preset_id == "logo":
+                if layer_pixmap is not None and not layer_pixmap.isNull():
+                    src_w = max(1, layer_pixmap.width())
+                    src_h = max(1, layer_pixmap.height())
+                    ratio = min(width / src_w, height / src_h)
+                    rendered_w = src_w * ratio
+                    rendered_h = src_h * ratio
+                else:
+                    rendered_w = width * 0.5
+                    rendered_h = height * 0.5
+                # In logo preset, default position is bottom-left.
+                layer_state["transform"]["x"] = rendered_w * 0.5
+                layer_state["transform"]["y"] = height - (rendered_h * 0.5)
+            else:
+                layer_state["transform"]["x"] = width * 0.5
+                layer_state["transform"]["y"] = height * 0.5
 
     def _refresh_preview(self):
         preset_meta = PRESETS[self.current_preset]
@@ -1383,6 +1467,167 @@ class ARPlusWindow(QMainWindow):
                 item.setPos(pos_x, pos_y)
         self._refresh_poster_textbox_overlay(canvas_w, canvas_h)
         self._update_position_info()
+        self._request_presets_preview_refresh(preset_ids=[self.current_preset])
+
+    def _compose_preset_canvas(
+        self,
+        preset_id: str,
+        log_upscale: bool = False,
+        render_scale: float = 1.0,
+        resample=Image.Resampling.LANCZOS,
+    ):
+        preset = PRESETS[preset_id]
+        base_w, base_h = preset["size"]
+        scale = max(0.02, min(1.0, float(render_scale)))
+        canvas_w = max(1, int(round(base_w * scale)))
+        canvas_h = max(1, int(round(base_h * scale)))
+        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+
+        for layer in ["background", "character", "gradient", "logo"]:
+            if not self._is_layer_allowed(preset_id, layer):
+                continue
+            layer_state = self._layer_state(preset_id, layer)
+            if not layer_state["visible"]:
+                continue
+
+            rendered = self._render_layer_for_export(
+                layer,
+                preset_id,
+                canvas_w=canvas_w,
+                canvas_h=canvas_h,
+                resample=resample,
+            )
+            if rendered is None:
+                continue
+
+            lw, lh = rendered.size
+            if layer == "gradient":
+                x = 0
+                y = 0
+            else:
+                tx = layer_state["transform"]["x"] * scale
+                ty = layer_state["transform"]["y"] * scale
+                x = int(tx - lw / 2)
+                if layer == "character":
+                    y = int(ty - lh)
+                else:
+                    y = int(ty - lh / 2)
+
+            if log_upscale and self.assets[layer].pil and layer not in {"logo", "gradient"}:
+                sw, sh = self.assets[layer].pil.size
+                upscale_ratio = max(lw / sw, lh / sh)
+                if upscale_ratio > self.upscale_warning_ratio:
+                    self._log(f"Avertissement upscale ({preset['label']} / {layer}): x{upscale_ratio:.2f}")
+
+            alpha = rendered.getchannel("A")
+            if layer_state["opacity"] < 1.0:
+                alpha = alpha.point(lambda px: int(px * layer_state["opacity"]))
+            canvas.paste(rendered, (x, y), alpha)
+
+        textbox_draw = self._build_poster_textbox_render(preset_id, canvas_w, canvas_h)
+        if textbox_draw is not None:
+            textbox_img, textbox_x, textbox_y = textbox_draw
+            canvas.alpha_composite(textbox_img, (textbox_x, textbox_y))
+        return canvas
+
+    def _build_preset_thumbnail_pixmap(
+        self,
+        preset_id: str,
+        max_w: int | None = None,
+        max_h: int | None = None,
+    ):
+        if max_w is None:
+            max_w = max(80, self.presets_preview_box_width - 8)
+        if max_h is None:
+            max_h = max(50, self.presets_preview_box_height - 8)
+        src_w, src_h = PRESETS[preset_id]["size"]
+        if src_w <= 0 or src_h <= 0:
+            return QPixmap()
+        ratio = min(max_w / src_w, max_h / src_h)
+        ratio = max(0.02, min(1.0, ratio))
+        quality_scale = max(0.1, min(1.0, float(self.presets_preview_quality_scale)))
+        render_ratio = max(0.01, min(1.0, ratio * quality_scale))
+        target_w = max(1, int(round(src_w * ratio)))
+        target_h = max(1, int(round(src_h * ratio)))
+        try:
+            image = self._compose_preset_canvas(
+                preset_id,
+                log_upscale=False,
+                render_scale=render_ratio,
+                resample=Image.Resampling.BILINEAR,
+            )
+        except Exception:
+            return QPixmap()
+        if image.size != (target_w, target_h):
+            image = image.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        return self._pil_to_qpixmap(image)
+
+    def _invalidate_presets_preview(self, preset_ids=None):
+        if preset_ids is None:
+            preset_ids = PRESETS.keys()
+        for preset_id in preset_ids:
+            if preset_id in PRESETS:
+                self.preset_preview_dirty.add(preset_id)
+
+    def _request_presets_preview_refresh(self, force: bool = False, preset_ids=None):
+        if not hasattr(self, "preset_preview_labels"):
+            return
+        self._invalidate_presets_preview(preset_ids)
+        if force:
+            self.presets_preview_timer.stop()
+            self.presets_preview_timer.start(0)
+            return
+        self.presets_preview_timer.start(self.presets_preview_interval_ms)
+
+    def _refresh_presets_preview_borders(self):
+        if not hasattr(self, "preset_preview_labels"):
+            return
+        for preset_id, label in self.preset_preview_labels.items():
+            border_color = "#D78EF1" if preset_id == self.current_preset else "#5E5E66"
+            label.setStyleSheet(
+                f"border: 2px solid {border_color}; background-color: #1F1F24;"
+            )
+
+    def _refresh_presets_preview_strip(self):
+        if not hasattr(self, "preset_preview_labels"):
+            return
+        if not self.preset_preview_dirty:
+            self._refresh_presets_preview_borders()
+            return
+        if not self.preset_preview_queue:
+            ordered_ids = [preset_id for preset_id in PRESETS if preset_id in self.preset_preview_dirty]
+            if self.current_preset in ordered_ids:
+                ordered_ids.remove(self.current_preset)
+                ordered_ids.insert(0, self.current_preset)
+            self.preset_preview_queue = ordered_ids
+        if not self.presets_preview_worker_timer.isActive():
+            self.presets_preview_worker_timer.start(0)
+
+    def _process_next_preset_preview(self):
+        if not hasattr(self, "preset_preview_labels"):
+            return
+        if not self.preset_preview_queue:
+            self._refresh_presets_preview_borders()
+            return
+        preset_id = self.preset_preview_queue.pop(0)
+        label = self.preset_preview_labels.get(preset_id)
+        if label is None:
+            self.preset_preview_dirty.discard(preset_id)
+        else:
+            pixmap = self._build_preset_thumbnail_pixmap(preset_id)
+            if pixmap.isNull():
+                label.setPixmap(QPixmap())
+                label.setText("N/A")
+            else:
+                label.setText("")
+                label.setPixmap(pixmap)
+            self.preset_preview_dirty.discard(preset_id)
+            border_color = "#D78EF1" if preset_id == self.current_preset else "#5E5E66"
+            label.setStyleSheet(
+                f"border: 2px solid {border_color}; background-color: #1F1F24;"
+            )
+        if self.preset_preview_queue:
+            self.presets_preview_worker_timer.start(self.presets_preview_worker_interval_ms)
 
     def _preview_pixmap(self, layer_id: str, canvas_w: int, canvas_h: int) -> QPixmap:
         if layer_id == "gradient":
@@ -2021,7 +2266,9 @@ class ARPlusWindow(QMainWindow):
             self.preset_combo.blockSignals(True)
             self.preset_combo.setCurrentIndex(preset_index)
             self.preset_combo.blockSignals(False)
+        self._refresh_presets_preview_borders()
 
+        self._invalidate_presets_preview()
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
@@ -2219,8 +2466,10 @@ class ARPlusWindow(QMainWindow):
             self.preset_combo.blockSignals(True)
             self.preset_combo.setCurrentIndex(preset_index)
             self.preset_combo.blockSignals(False)
+        self._refresh_presets_preview_borders()
 
         self._set_active_layer("background", sync=False)
+        self._invalidate_presets_preview()
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
@@ -2269,49 +2518,7 @@ class ARPlusWindow(QMainWindow):
 
     def _export_preset(self, preset_id: str, export_dir: Path, base_name: str):
         preset = PRESETS[preset_id]
-        canvas_w, canvas_h = preset["size"]
-        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-
-        for layer in ["background", "character", "gradient", "logo"]:
-            if not self._is_layer_allowed(preset_id, layer):
-                continue
-
-            layer_state = self._layer_state(preset_id, layer)
-            if not layer_state["visible"]:
-                continue
-
-            rendered = self._render_layer_for_export(layer, preset_id)
-            if rendered is None:
-                continue
-
-            lw, lh = rendered.size
-            if layer == "gradient":
-                x = 0
-                y = 0
-            else:
-                x = int(layer_state["transform"]["x"] - lw / 2)
-                if layer == "character":
-                    y = int(layer_state["transform"]["y"] - lh)
-                else:
-                    y = int(layer_state["transform"]["y"] - lh / 2)
-
-            if self.assets[layer].pil and layer not in {"logo", "gradient"}:
-                sw, sh = self.assets[layer].pil.size
-                upscale_ratio = max(lw / sw, lh / sh)
-                if upscale_ratio > self.upscale_warning_ratio:
-                    self._log(
-                        f"Avertissement upscale ({preset['label']} / {layer}): x{upscale_ratio:.2f}"
-                    )
-
-            alpha = rendered.getchannel("A")
-            if layer_state["opacity"] < 1.0:
-                alpha = alpha.point(lambda px: int(px * layer_state["opacity"]))
-            canvas.paste(rendered, (x, y), alpha)
-
-        textbox_draw = self._build_poster_textbox_render(preset_id, canvas_w, canvas_h)
-        if textbox_draw is not None:
-            textbox_img, textbox_x, textbox_y = textbox_draw
-            canvas.alpha_composite(textbox_img, (textbox_x, textbox_y))
+        canvas = self._compose_preset_canvas(preset_id, log_upscale=True)
 
         file_stub = preset["filename"]
         ext = "png" if preset.get("png") else "jpg"
@@ -2328,9 +2535,17 @@ class ARPlusWindow(QMainWindow):
             return False
         alpha_extrema = canvas.getchannel("A").getextrema()
         return alpha_extrema[0] < 255
-    def _render_layer_for_export(self, layer_id: str, preset_id: str):
-        preset_meta = PRESETS[preset_id]
-        canvas_w, canvas_h = preset_meta["size"]
+    def _render_layer_for_export(
+        self,
+        layer_id: str,
+        preset_id: str,
+        canvas_w: int | None = None,
+        canvas_h: int | None = None,
+        resample=Image.Resampling.LANCZOS,
+    ):
+        if canvas_w is None or canvas_h is None:
+            preset_meta = PRESETS[preset_id]
+            canvas_w, canvas_h = preset_meta["size"]
         if layer_id == "gradient":
             return self._build_gradient_image(canvas_w, canvas_h)
 
@@ -2360,7 +2575,7 @@ class ARPlusWindow(QMainWindow):
         ratio *= scale
 
         target_size = (max(1, int(sw * ratio)), max(1, int(sh * ratio)))
-        rendered = source.resize(target_size, Image.Resampling.LANCZOS)
+        rendered = source.resize(target_size, resample)
         if layer_id == "logo":
             return self._apply_logo_shadow_pil(rendered)
         return rendered
@@ -2403,3 +2618,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
