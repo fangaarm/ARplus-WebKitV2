@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import json
 import math
 import os
@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-LAYER_ORDER = ["background", "character", "logo", "fx"]
+LAYER_ORDER = ["background", "character", "gradient", "logo", "fx"]
 
 PRESETS = {
     "poster": {"label": "Poster", "size": (1600, 2400), "filename": "Poster_1600x2400"},
@@ -122,6 +122,7 @@ class ARPlusWindow(QMainWindow):
         self.logo_text = ""
         self.logo_text_size = 300
         self.logo_text_align = "center"
+        self.logo_text_force_upper = False
         self.logo_text_line_spacing = 100
         self.logo_text_color = "#FFFFFF"
         self.logo_shadow_enabled = False
@@ -130,6 +131,13 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_angle = 135
         self.logo_shadow_opacity = 60
         self.logo_shadow_color = "#000000"
+        self.gradient_enabled = False
+        self.gradient_mode = "single"
+        self.gradient_direction = "top"
+        self.gradient_color_a = "#000000"
+        self.gradient_color_b = "#FFFFFF"
+        self.gradient_distance = 40
+        self.gradient_stretch = 100
         self.upscale_warning_ratio = 1.75
         self.current_preset = "poster"
         self.active_layer = "background"
@@ -155,8 +163,10 @@ class ARPlusWindow(QMainWindow):
         self.scene.addItem(self.clip_item)
 
         self.items: Dict[str, LayerGraphicsItem] = {}
-        for layer in ["background", "character", "logo"]:
+        for layer in ["background", "character", "gradient", "logo"]:
             item = LayerGraphicsItem(layer)
+            if layer == "gradient":
+                item.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable, False)
             item.moved.connect(self._on_layer_moved)
             item.clicked.connect(self._on_layer_clicked)
             item.setParentItem(self.clip_item)
@@ -189,6 +199,10 @@ class ARPlusWindow(QMainWindow):
             state[preset_id]["background"]["fit_mode"] = "crop"
             state[preset_id]["character"]["fit_mode"] = "contain"
             state[preset_id]["character"]["transform"]["anchor"] = "bottom"
+            state[preset_id]["gradient"]["fit_mode"] = "stretch"
+            state[preset_id]["gradient"]["transform"]["x"] = width * 0.5
+            state[preset_id]["gradient"]["transform"]["y"] = height * 0.5
+            state[preset_id]["gradient"]["transform"]["scale"] = 1.0
             state[preset_id]["logo"]["fit_mode"] = "contain"
             state[preset_id]["logo"]["transform"]["x"] = width * 0.5
             state[preset_id]["logo"]["transform"]["y"] = height * 0.5
@@ -225,9 +239,9 @@ class ARPlusWindow(QMainWindow):
         resources_layout = QVBoxLayout(resources_box)
         bg_btn = QPushButton("Importer Background")
         bg_btn.clicked.connect(lambda: self._import_layer("background"))
-        char_btn = QPushButton("Importer Character")
+        char_btn = QPushButton("Importer Personnage")
         char_btn.clicked.connect(lambda: self._import_layer("character"))
-        logo_btn = QPushButton("Importer logo")
+        logo_btn = QPushButton("Importer Logo")
         logo_btn.clicked.connect(lambda: self._import_layer("logo"))
         resources_layout.addWidget(bg_btn)
         resources_layout.addWidget(char_btn)
@@ -248,6 +262,8 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_align_combo.addItem("Centre", "center")
         self.logo_text_align_combo.addItem("Droite", "right")
         self.logo_text_align_combo.currentIndexChanged.connect(self._on_logo_text_align_changed)
+        self.logo_text_upper_check = QCheckBox("Majuscule")
+        self.logo_text_upper_check.toggled.connect(self._on_logo_text_upper_toggled)
         self.logo_text_line_spacing_spin = QSpinBox()
         self.logo_text_line_spacing_spin.setRange(50, 300)
         self.logo_text_line_spacing_spin.setSingleStep(5)
@@ -280,21 +296,58 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_opacity_spin.valueChanged.connect(self._on_logo_shadow_opacity_changed)
         self.logo_shadow_color_btn = QPushButton("Couleur ombre")
         self.logo_shadow_color_btn.clicked.connect(self._pick_logo_shadow_color)
+        self.gradient_enable_check = QCheckBox("Activer degrade")
+        self.gradient_enable_check.toggled.connect(self._on_gradient_enabled_toggled)
+        self.gradient_mode_combo = QComboBox()
+        self.gradient_mode_combo.addItem("Couleur unique", "single")
+        self.gradient_mode_combo.addItem("Deux couleurs", "double")
+        self.gradient_mode_combo.currentIndexChanged.connect(self._on_gradient_mode_changed)
+        self.gradient_direction_combo = QComboBox()
+        self.gradient_direction_combo.addItem("Haut", "top")
+        self.gradient_direction_combo.addItem("Bas", "bottom")
+        self.gradient_direction_combo.addItem("Gauche", "left")
+        self.gradient_direction_combo.addItem("Droite", "right")
+        self.gradient_direction_combo.currentIndexChanged.connect(self._on_gradient_direction_changed)
+        self.gradient_distance_spin = QSpinBox()
+        self.gradient_distance_spin.setRange(1, 100)
+        self.gradient_distance_spin.setSuffix(" %")
+        self.gradient_distance_spin.setValue(self.gradient_distance)
+        self.gradient_distance_spin.valueChanged.connect(self._on_gradient_distance_changed)
+        self.gradient_stretch_spin = QSpinBox()
+        self.gradient_stretch_spin.setRange(20, 300)
+        self.gradient_stretch_spin.setSuffix(" %")
+        self.gradient_stretch_spin.setValue(self.gradient_stretch)
+        self.gradient_stretch_spin.valueChanged.connect(self._on_gradient_stretch_changed)
+        self.gradient_color_a_btn = QPushButton("Couleur degrade A")
+        self.gradient_color_a_btn.clicked.connect(self._pick_gradient_color_a)
+        self.gradient_color_b_btn = QPushButton("Couleur degrade B")
+        self.gradient_color_b_btn.clicked.connect(self._pick_gradient_color_b)
 
         form = QFormLayout()
         form.addRow("Contenu", self.logo_text_input)
         form.addRow("Taille", self.logo_text_size_spin)
         form.addRow("Alignement", self.logo_text_align_combo)
+        form.addRow(self.logo_text_upper_check)
         form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
         form.addRow(self.logo_shadow_check)
         form.addRow("Distance ombre", self.logo_shadow_distance_spin)
         form.addRow("Lissage ombre", self.logo_shadow_blur_spin)
         form.addRow("Angle ombre", self.logo_shadow_angle_spin)
         form.addRow("Opacite ombre", self.logo_shadow_opacity_spin)
+        gradient_form = QFormLayout()
+        gradient_form.addRow(self.gradient_enable_check)
+        gradient_form.addRow("Mode", self.gradient_mode_combo)
+        gradient_form.addRow("Direction", self.gradient_direction_combo)
+        gradient_form.addRow("Distance", self.gradient_distance_spin)
+        gradient_form.addRow("Etirement", self.gradient_stretch_spin)
         resources_layout.addWidget(self.logo_text_checkbox)
         resources_layout.addLayout(form)
+        resources_layout.addLayout(gradient_form)
         resources_layout.addWidget(self.logo_color_btn)
         resources_layout.addWidget(self.logo_shadow_color_btn)
+        resources_layout.addWidget(self.gradient_color_a_btn)
+        resources_layout.addWidget(self.gradient_color_b_btn)
+        self._sync_gradient_controls()
 
         layout.addWidget(resources_box)
 
@@ -326,10 +379,10 @@ class ARPlusWindow(QMainWindow):
         opacity_layout.addWidget(self.opacity_value_label)
 
         self.scale_slider = QSlider(Qt.Orientation.Horizontal)
-        self.scale_slider.setRange(0, 100)
-        self.scale_slider.setValue(100)
+        self.scale_slider.setRange(0, 300)
+        self.scale_slider.setValue(300)
         self.scale_slider.valueChanged.connect(self._on_scale_changed)
-        self.scale_value_label = QLabel("100")
+        self.scale_value_label = QLabel("300")
         self.scale_value_label.setMinimumWidth(36)
         scale_row = QWidget()
         scale_layout = QHBoxLayout(scale_row)
@@ -338,12 +391,15 @@ class ARPlusWindow(QMainWindow):
         scale_layout.addWidget(self.scale_value_label)
 
         reset_btn = QPushButton("Réinitialiser le calque")
+        center_btn = QPushButton("Centrer le calque")
+        center_btn.clicked.connect(self._on_center_layer)
         reset_btn.clicked.connect(self._on_reset_layer)
 
         layer_layout.addRow("Calque", layer_buttons_row)
         layer_layout.addRow(self.visible_check)
         layer_layout.addRow("Opacite", opacity_row)
         layer_layout.addRow("Echelle", scale_row)
+        layer_layout.addRow(center_btn)
         layer_layout.addRow(reset_btn)
         self._set_active_layer(self.active_layer, sync=False)
         layout.addWidget(layer_box)
@@ -473,6 +529,10 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_align = self.logo_text_align_combo.currentData()
         self._refresh_preview()
 
+    def _on_logo_text_upper_toggled(self, checked: bool):
+        self.logo_text_force_upper = checked
+        self._refresh_preview()
+
     def _on_logo_text_line_spacing_changed(self, value: int):
         self.logo_text_line_spacing = value
         self._refresh_preview()
@@ -495,6 +555,28 @@ class ARPlusWindow(QMainWindow):
 
     def _on_logo_shadow_opacity_changed(self, value: int):
         self.logo_shadow_opacity = value
+        self._refresh_preview()
+
+    def _on_gradient_enabled_toggled(self, checked: bool):
+        self.gradient_enabled = checked
+        self._sync_gradient_controls()
+        self._refresh_preview()
+
+    def _on_gradient_mode_changed(self):
+        self.gradient_mode = self.gradient_mode_combo.currentData()
+        self._sync_gradient_controls()
+        self._refresh_preview()
+
+    def _on_gradient_direction_changed(self):
+        self.gradient_direction = self.gradient_direction_combo.currentData()
+        self._refresh_preview()
+
+    def _on_gradient_distance_changed(self, value: int):
+        self.gradient_distance = value
+        self._refresh_preview()
+
+    def _on_gradient_stretch_changed(self, value: int):
+        self.gradient_stretch = value
         self._refresh_preview()
 
     def _logo_effective_size(self) -> int:
@@ -521,7 +603,7 @@ class ARPlusWindow(QMainWindow):
         return self._load_logo_font(self._logo_effective_size())
 
     def _logo_display_text(self) -> str:
-        return self.logo_text
+        return self.logo_text.upper() if self.logo_text_force_upper else self.logo_text
 
     def _logo_shadow_offset(self) -> Tuple[int, int]:
         angle_rad = math.radians(self.logo_shadow_angle)
@@ -599,6 +681,52 @@ class ARPlusWindow(QMainWindow):
             return self._pil_to_qpixmap(shadowed)
         except Exception:
             return pixmap
+
+    def _gradient_color_rgb(self, hex_color: str, fallback: str) -> Tuple[int, int, int]:
+        color = QColor(hex_color)
+        if not color.isValid():
+            color = QColor(fallback)
+        return color.red(), color.green(), color.blue()
+
+    def _build_gradient_image(self, canvas_w: int, canvas_h: int):
+        if not self.gradient_enabled:
+            return None
+        if canvas_w <= 0 or canvas_h <= 0:
+            return None
+
+        vertical = self.gradient_direction in {"top", "bottom"}
+        axis_size = canvas_h if vertical else canvas_w
+        distance_px = max(1, int(axis_size * (self.gradient_distance / 100)))
+        stretch_ratio = max(0.2, self.gradient_stretch / 100)
+
+        color_a = self._gradient_color_rgb(self.gradient_color_a, "#000000")
+        color_b = self._gradient_color_rgb(self.gradient_color_b, "#FFFFFF")
+        ramp_data = []
+        for idx in range(axis_size):
+            if self.gradient_direction in {"top", "left"}:
+                axis_pos = idx
+            else:
+                axis_pos = (axis_size - 1) - idx
+            t = min(1.0, axis_pos / distance_px)
+            t = min(1.0, max(0.0, t ** (1.0 / stretch_ratio)))
+
+            if self.gradient_mode == "double":
+                red = int(round(color_a[0] + ((color_b[0] - color_a[0]) * t)))
+                green = int(round(color_a[1] + ((color_b[1] - color_a[1]) * t)))
+                blue = int(round(color_a[2] + ((color_b[2] - color_a[2]) * t)))
+                alpha = 255
+            else:
+                red, green, blue = color_a
+                alpha = int(round((1.0 - t) * 255))
+            ramp_data.append((red, green, blue, alpha))
+
+        if vertical:
+            ramp = Image.new("RGBA", (1, axis_size), (0, 0, 0, 0))
+            ramp.putdata(ramp_data)
+        else:
+            ramp = Image.new("RGBA", (axis_size, 1), (0, 0, 0, 0))
+            ramp.putdata(ramp_data)
+        return ramp.resize((canvas_w, canvas_h), Image.Resampling.BILINEAR)
 
     def _draw_logo_preview_text(self, painter: QPainter, draw_rect, logo_text: str):
         metrics = QFontMetrics(painter.font())
@@ -712,6 +840,18 @@ class ARPlusWindow(QMainWindow):
             self.logo_shadow_color = color.name()
             self._refresh_preview()
 
+    def _pick_gradient_color_a(self):
+        color = QColorDialog.getColor(QColor(self.gradient_color_a), self)
+        if color.isValid():
+            self.gradient_color_a = color.name()
+            self._refresh_preview()
+
+    def _pick_gradient_color_b(self):
+        color = QColorDialog.getColor(QColor(self.gradient_color_b), self)
+        if color.isValid():
+            self.gradient_color_b = color.name()
+            self._refresh_preview()
+
     def _on_visible_changed(self, checked: bool):
         layer = self._selected_layer()
         self._layer_state(self.current_preset, layer)["visible"] = checked
@@ -735,6 +875,25 @@ class ARPlusWindow(QMainWindow):
         if layer == "background":
             self.state[self.current_preset][layer]["fit_mode"] = "crop"
         self._apply_auto_placement(layer, self.current_preset)
+        self._refresh_preview()
+        self._sync_layer_controls()
+
+    def _on_center_layer(self):
+        layer = self._selected_layer()
+        if not self._is_layer_allowed(self.current_preset, layer):
+            return
+
+        width, height = PRESETS[self.current_preset]["size"]
+        layer_state = self._layer_state(self.current_preset, layer)
+        layer_state["transform"]["x"] = width * 0.5
+        if layer == "character":
+            pixmap = self._preview_pixmap(layer, width, height)
+            if pixmap.isNull():
+                layer_state["transform"]["y"] = height * 0.5
+            else:
+                layer_state["transform"]["y"] = (height * 0.5) + (pixmap.height() * 0.5)
+        else:
+            layer_state["transform"]["y"] = height * 0.5
         self._refresh_preview()
         self._sync_layer_controls()
 
@@ -821,7 +980,7 @@ class ARPlusWindow(QMainWindow):
 
     def _apply_auto_placement(self, layer_id: str, preset_id: str):
         layer_pixmap = self.assets[layer_id].pixmap
-        if (layer_pixmap is None or layer_pixmap.isNull()) and layer_id != "logo":
+        if (layer_pixmap is None or layer_pixmap.isNull()) and layer_id not in {"logo", "gradient"}:
             return
 
         width, height = PRESETS[preset_id]["size"]
@@ -844,6 +1003,12 @@ class ARPlusWindow(QMainWindow):
             rendered_h = src_h * ratio
             # Keep initial placement visually centered while using a bottom anchor for scaling.
             layer_state["transform"]["y"] = (height * 0.5) + (rendered_h * 0.5)
+        elif layer_id == "gradient":
+            layer_state["fit_mode"] = "stretch"
+            layer_state["transform"]["anchor"] = "center"
+            layer_state["transform"]["x"] = width * 0.5
+            layer_state["transform"]["y"] = height * 0.5
+            layer_state["transform"]["scale"] = 1.0
         elif layer_id == "logo":
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["scale"] = 1.0
@@ -855,7 +1020,7 @@ class ARPlusWindow(QMainWindow):
         preset_meta = PRESETS[self.current_preset]
         canvas_w, canvas_h = preset_meta["size"]
 
-        for layer in ["background", "character", "logo"]:
+        for layer in ["background", "character", "gradient", "logo"]:
             item = self.items[layer]
             layer_state = self._layer_state(self.current_preset, layer)
             if not self._is_layer_allowed(self.current_preset, layer):
@@ -874,16 +1039,28 @@ class ARPlusWindow(QMainWindow):
             item.setOpacity(layer_state["opacity"])
             item.setPixmap(pixmap)
 
-            pos_x = layer_state["transform"]["x"]
-            pos_y = layer_state["transform"]["y"]
             if layer == "character":
+                pos_x = layer_state["transform"]["x"]
+                pos_y = layer_state["transform"]["y"]
                 item.setOffset(-pixmap.width() / 2, -pixmap.height())
+                item.setPos(pos_x, pos_y)
+            elif layer == "gradient":
+                item.setOffset(0, 0)
+                item.setPos(0, 0)
             else:
+                pos_x = layer_state["transform"]["x"]
+                pos_y = layer_state["transform"]["y"]
                 item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
-            item.setPos(pos_x, pos_y)
+                item.setPos(pos_x, pos_y)
         self._update_position_info()
 
     def _preview_pixmap(self, layer_id: str, canvas_w: int, canvas_h: int) -> QPixmap:
+        if layer_id == "gradient":
+            gradient_img = self._build_gradient_image(canvas_w, canvas_h)
+            if gradient_img is None:
+                return QPixmap()
+            return self._pil_to_qpixmap(gradient_img)
+
         layer_state = self._layer_state(self.current_preset, layer_id)
         fit_mode = layer_state["fit_mode"]
         scale = layer_state["transform"]["scale"]
@@ -1033,6 +1210,9 @@ class ARPlusWindow(QMainWindow):
             self.logo_text_color = color.strip()
 
         self.logo_text_enabled = bool(raw_logo_text.get("enabled", self.logo_text_enabled))
+        self.logo_text_force_upper = bool(
+            raw_logo_text.get("force_upper", self.logo_text_force_upper)
+        )
         self.logo_text_size = max(
             12,
             min(600, int(round(self._to_float(raw_logo_text.get("size"), self.logo_text_size)))),
@@ -1081,6 +1261,41 @@ class ARPlusWindow(QMainWindow):
 
         self._sync_logo_controls()
 
+    def _apply_gradient_settings(self, raw_gradient):
+        if not isinstance(raw_gradient, dict):
+            self.gradient_enabled = False
+            self.gradient_mode = "single"
+            self.gradient_direction = "top"
+            self.gradient_color_a = "#000000"
+            self.gradient_color_b = "#FFFFFF"
+            self.gradient_distance = 40
+            self.gradient_stretch = 100
+            self._sync_gradient_controls()
+            return
+
+        self.gradient_enabled = bool(raw_gradient.get("enabled", self.gradient_enabled))
+        mode = raw_gradient.get("mode")
+        if mode in {"single", "double"}:
+            self.gradient_mode = mode
+        direction = raw_gradient.get("direction")
+        if direction in {"top", "bottom", "left", "right"}:
+            self.gradient_direction = direction
+        color_a = raw_gradient.get("color_a")
+        if isinstance(color_a, str) and color_a.strip():
+            self.gradient_color_a = color_a.strip()
+        color_b = raw_gradient.get("color_b")
+        if isinstance(color_b, str) and color_b.strip():
+            self.gradient_color_b = color_b.strip()
+        self.gradient_distance = max(
+            1,
+            min(100, int(round(self._to_float(raw_gradient.get("distance"), self.gradient_distance)))),
+        )
+        self.gradient_stretch = max(
+            20,
+            min(300, int(round(self._to_float(raw_gradient.get("stretch"), self.gradient_stretch)))),
+        )
+        self._sync_gradient_controls()
+
     def _sync_logo_controls(self):
         self.logo_text_checkbox.blockSignals(True)
         self.logo_text_checkbox.setChecked(self.logo_text_enabled)
@@ -1099,6 +1314,10 @@ class ARPlusWindow(QMainWindow):
         if align_idx >= 0:
             self.logo_text_align_combo.setCurrentIndex(align_idx)
         self.logo_text_align_combo.blockSignals(False)
+
+        self.logo_text_upper_check.blockSignals(True)
+        self.logo_text_upper_check.setChecked(self.logo_text_force_upper)
+        self.logo_text_upper_check.blockSignals(False)
 
         self.logo_text_line_spacing_spin.blockSignals(True)
         self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
@@ -1123,6 +1342,42 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_opacity_spin.blockSignals(True)
         self.logo_shadow_opacity_spin.setValue(self.logo_shadow_opacity)
         self.logo_shadow_opacity_spin.blockSignals(False)
+
+    def _sync_gradient_controls(self):
+        if not hasattr(self, "gradient_enable_check"):
+            return
+
+        self.gradient_enable_check.blockSignals(True)
+        self.gradient_enable_check.setChecked(self.gradient_enabled)
+        self.gradient_enable_check.blockSignals(False)
+
+        self.gradient_mode_combo.blockSignals(True)
+        mode_idx = self.gradient_mode_combo.findData(self.gradient_mode)
+        if mode_idx >= 0:
+            self.gradient_mode_combo.setCurrentIndex(mode_idx)
+        self.gradient_mode_combo.blockSignals(False)
+
+        self.gradient_direction_combo.blockSignals(True)
+        dir_idx = self.gradient_direction_combo.findData(self.gradient_direction)
+        if dir_idx >= 0:
+            self.gradient_direction_combo.setCurrentIndex(dir_idx)
+        self.gradient_direction_combo.blockSignals(False)
+
+        self.gradient_distance_spin.blockSignals(True)
+        self.gradient_distance_spin.setValue(self.gradient_distance)
+        self.gradient_distance_spin.blockSignals(False)
+
+        self.gradient_stretch_spin.blockSignals(True)
+        self.gradient_stretch_spin.setValue(self.gradient_stretch)
+        self.gradient_stretch_spin.blockSignals(False)
+
+        controls_enabled = self.gradient_enabled
+        self.gradient_mode_combo.setEnabled(controls_enabled)
+        self.gradient_direction_combo.setEnabled(controls_enabled)
+        self.gradient_distance_spin.setEnabled(controls_enabled)
+        self.gradient_stretch_spin.setEnabled(controls_enabled)
+        self.gradient_color_a_btn.setEnabled(controls_enabled)
+        self.gradient_color_b_btn.setEnabled(controls_enabled and self.gradient_mode == "double")
 
     def _resolve_snapshot_asset_path(
         self,
@@ -1189,6 +1444,7 @@ class ARPlusWindow(QMainWindow):
         self.state = self._merge_state_from_snapshot(payload.get("state"))
         self._apply_logo_text_settings(payload.get("logo_text"))
         self._apply_logo_shadow_settings(payload.get("logo_shadow"))
+        self._apply_gradient_settings(payload.get("gradient"))
         self._apply_selected_exports(payload.get("selected_exports"))
 
         base_name = payload.get("base_name")
@@ -1295,6 +1551,7 @@ class ARPlusWindow(QMainWindow):
                 "text": self.logo_text,
                 "size": self.logo_text_size,
                 "align": self.logo_text_align,
+                "force_upper": self.logo_text_force_upper,
                 "line_spacing": self.logo_text_line_spacing,
                 "color": self.logo_text_color,
             },
@@ -1305,6 +1562,15 @@ class ARPlusWindow(QMainWindow):
                 "angle": self.logo_shadow_angle,
                 "opacity": self.logo_shadow_opacity,
                 "color": self.logo_shadow_color,
+            },
+            "gradient": {
+                "enabled": self.gradient_enabled,
+                "mode": self.gradient_mode,
+                "direction": self.gradient_direction,
+                "color_a": self.gradient_color_a,
+                "color_b": self.gradient_color_b,
+                "distance": self.gradient_distance,
+                "stretch": self.gradient_stretch,
             },
             "state": copy.deepcopy(self.state),
         }
@@ -1379,6 +1645,7 @@ class ARPlusWindow(QMainWindow):
         self.logo_text = ""
         self.logo_text_size = 300
         self.logo_text_align = "center"
+        self.logo_text_force_upper = False
         self.logo_text_line_spacing = 100
         self.logo_text_color = "#FFFFFF"
         self.logo_shadow_enabled = False
@@ -1387,10 +1654,18 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_angle = 135
         self.logo_shadow_opacity = 60
         self.logo_shadow_color = "#000000"
+        self.gradient_enabled = False
+        self.gradient_mode = "single"
+        self.gradient_direction = "top"
+        self.gradient_color_a = "#000000"
+        self.gradient_color_b = "#FFFFFF"
+        self.gradient_distance = 40
+        self.gradient_stretch = 100
 
         self.base_name_input.setText("Name")
         self._set_all_exports_checked(True)
         self._sync_logo_controls()
+        self._sync_gradient_controls()
 
         preset_index = self.preset_combo.findData(self.current_preset)
         if preset_index >= 0:
@@ -1423,12 +1698,24 @@ class ARPlusWindow(QMainWindow):
         except Exception as exc:
             self._log(f"Erreur autosafe projet: {exc}")
 
+        transparent_presets: list[str] = []
         for idx, preset_id in enumerate(selected, start=1):
             try:
-                self._export_preset(preset_id, export_dir, base_name)
+                has_transparency = self._export_preset(preset_id, export_dir, base_name)
+                if has_transparency and preset_id != "logo":
+                    transparent_presets.append(PRESETS[preset_id]["label"])
             except Exception as exc:
                 self._log(f"Erreur export {preset_id}: {exc}")
             self.progress.setValue(int((idx / total) * 100))
+
+        if transparent_presets:
+            warning_lines = "\n".join(f"- {label}" for label in transparent_presets)
+            self._log("Avertissement: transparence restante detectee sur certains presets.")
+            QMessageBox.warning(
+                self,
+                "Transparence detectee",
+                "Une partie du canvas reste transparente sur:\n" + warning_lines,
+            )
 
         self._log("Export terminé.")
 
@@ -1437,7 +1724,7 @@ class ARPlusWindow(QMainWindow):
         canvas_w, canvas_h = preset["size"]
         canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
-        for layer in ["background", "character", "logo"]:
+        for layer in ["background", "character", "gradient", "logo"]:
             if not self._is_layer_allowed(preset_id, layer):
                 continue
 
@@ -1450,13 +1737,17 @@ class ARPlusWindow(QMainWindow):
                 continue
 
             lw, lh = rendered.size
-            x = int(layer_state["transform"]["x"] - lw / 2)
-            if layer == "character":
-                y = int(layer_state["transform"]["y"] - lh)
+            if layer == "gradient":
+                x = 0
+                y = 0
             else:
-                y = int(layer_state["transform"]["y"] - lh / 2)
+                x = int(layer_state["transform"]["x"] - lw / 2)
+                if layer == "character":
+                    y = int(layer_state["transform"]["y"] - lh)
+                else:
+                    y = int(layer_state["transform"]["y"] - lh / 2)
 
-            if self.assets[layer].pil and layer != "logo":
+            if self.assets[layer].pil and layer not in {"logo", "gradient"}:
                 sw, sh = self.assets[layer].pil.size
                 upscale_ratio = max(lw / sw, lh / sh)
                 if upscale_ratio > self.upscale_warning_ratio:
@@ -1480,9 +1771,16 @@ class ARPlusWindow(QMainWindow):
             canvas.save(out_path)
         self._log(f"Export {preset['label']}: {out_path}")
 
+        if preset_id == "logo":
+            return False
+        alpha_extrema = canvas.getchannel("A").getextrema()
+        return alpha_extrema[0] < 255
     def _render_layer_for_export(self, layer_id: str, preset_id: str):
         preset_meta = PRESETS[preset_id]
         canvas_w, canvas_h = preset_meta["size"]
+        if layer_id == "gradient":
+            return self._build_gradient_image(canvas_w, canvas_h)
+
         state = self._layer_state(preset_id, layer_id)
         fit_mode = state["fit_mode"]
         scale = state["transform"]["scale"]
@@ -1547,4 +1845,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
