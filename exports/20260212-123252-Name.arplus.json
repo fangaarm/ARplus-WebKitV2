@@ -1,0 +1,351 @@
+{
+  "schema_version": 1,
+  "saved_at": "2026-02-12T12:32:56",
+  "program_root": "D:\\CODE_SCRIPT\\ARplus-WebKitV2",
+  "current_preset": "poster",
+  "base_name": "Name",
+  "selected_exports": [
+    "poster",
+    "fullscreen",
+    "hero",
+    "logo",
+    "background",
+    "background_no_logo"
+  ],
+  "assets": {
+    "background": {
+      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/03-BACKGROUND/les fruits de nuages.jpg",
+      "loaded": true
+    },
+    "character": {
+      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/02-PERSONNAGE/Antoine.png",
+      "loaded": true
+    },
+    "logo": {
+      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/01-LOGO/[ZeeMagic]_Trouver_L_amour_Logo.png",
+      "loaded": true
+    },
+    "fx": {
+      "path": "",
+      "loaded": false
+    }
+  },
+  "logo_text": {
+    "enabled": true,
+    "text": "trouver\nl'amour",
+    "size": 300,
+    "align": "center",
+    "line_spacing": 60,
+    "color": "#55ffff"
+  },
+  "logo_shadow": {
+    "enabled": true,
+    "distance": 16,
+    "blur": 11,
+    "angle": 135,
+    "opacity": 100,
+    "color": "#0084f8"
+  },
+  "state": {
+    "poster": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 800.0,
+          "y": 1200.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 888.3610451306406,
+          "y": 2400.000000000001,
+          "scale": 0.83,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 794.2992874109264,
+          "y": 265.08313539192386,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "fullscreen": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 1740.0,
+          "y": 438.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1740.0,
+          "y": 876.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1740.0,
+          "y": 438.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "hero": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 1120.0,
+          "y": 336.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1120.0,
+          "y": 672.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1120.0,
+          "y": 336.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "logo": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 400.0,
+          "y": 150.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 400.0,
+          "y": 300.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 400.0,
+          "y": 150.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "background": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1920.0,
+          "y": 2160.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "background_no_logo": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1920.0,
+          "y": 2160.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    }
+  }
+}
