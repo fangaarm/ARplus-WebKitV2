@@ -9,9 +9,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import Dict, Tuple
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QProgressBar,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QVBoxLayout,
@@ -41,6 +42,51 @@ from PySide6.QtWidgets import (
 )
 
 LAYER_ORDER = ["background", "character", "gradient", "logo", "fx"]
+
+GUIDE_COLOR_MAP = {
+    "background": (254, 67, 218),
+    "character": (248, 255, 51),
+    "logo": (62, 195, 52),
+}
+GUIDE_COLOR_TOLERANCE = 40
+GUIDE_OPACITY_DEFAULT = 0.25
+POSTER_GUIDE_FILES = {
+    "1": [
+        "visuel-Poster-1600x2400-gabarit-1.jpg",
+        "visuel-Poster-1600x2400-gabarit.jpg",
+    ],
+    "2": [
+        "visuel-Poster-1600x2400-gabarit-2.jpg",
+    ],
+}
+POSTER_TEXTBOX_BASE = {
+    "x": 0,
+    "y": 36,
+    "height": 118,
+    "min_width": 120,
+    "padding_left": 28,
+    "radius": 12,
+    "bevel_size": 4,
+    "bevel_strength": 130,
+    "font_size": 72,
+    "fill_color": "#0B5FA6",
+    "text_color": "#F2F3EE",
+}
+GUIDE_FILE_PATTERNS = {
+    "fullscreen": [
+        "FullScreen+Logo-APPTV-3480x876-gabarit.jpg",
+        "FullScreen+Logo-3480x876-gabarit.jpg",
+    ],
+    "hero": [
+        "Hero-Banner-2240x672-gabarit.jpg",
+    ],
+    "background": [
+        "visuel-Background-3840x2160-gabarit.jpg",
+    ],
+    "background_no_logo": [
+        "visuel-Background-no-logo-3840x2160-gabarit.jpg",
+    ],
+}
 
 PRESETS = {
     "poster": {"label": "Poster", "size": (1600, 2400), "filename": "Poster_1600x2400"},
@@ -122,9 +168,11 @@ class ARPlusWindow(QMainWindow):
         self.logo_text = ""
         self.logo_text_size = 300
         self.logo_text_align = "center"
-        self.logo_text_force_upper = False
+        self.logo_text_force_upper = True
         self.logo_text_line_spacing = 100
         self.logo_text_color = "#FFFFFF"
+        self.poster_textbox_enabled = True
+        self.poster_textbox_text = "TEXTE BOX"
         self.logo_shadow_enabled = False
         self.logo_shadow_distance = 16
         self.logo_shadow_blur = 12
@@ -138,12 +186,22 @@ class ARPlusWindow(QMainWindow):
         self.gradient_color_b = "#FFFFFF"
         self.gradient_distance = 40
         self.gradient_stretch = 100
+        self.guides_visible = True
+        self.guides_opacity = GUIDE_OPACITY_DEFAULT
+        self.poster_guide_variant = "1"
         self.upscale_warning_ratio = 1.75
         self.current_preset = "poster"
         self.active_layer = "background"
         self.updating_ui = False
         self.program_root = Path(__file__).resolve().parent
         self.autosave_dir = self.program_root / "autosafe"
+        self.guide_pixmaps: Dict[str, QPixmap] = {}
+        self.guide_regions: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {}
+        app_icon_path = self.program_root / "asset" / "icon.ico"
+        if app_icon_path.exists():
+            app_icon = QIcon(str(app_icon_path))
+            if not app_icon.isNull():
+                self.setWindowIcon(app_icon)
 
         self.state = self._build_default_state()
 
@@ -172,6 +230,21 @@ class ARPlusWindow(QMainWindow):
             item.setParentItem(self.clip_item)
             self.items[layer] = item
 
+        self.guide_item = QGraphicsPixmapItem()
+        self.guide_item.setParentItem(self.clip_item)
+        self.guide_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.guide_item.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.guide_item.setOpacity(self.guides_opacity)
+        self.guide_item.setZValue(5_000)
+        self.guide_item.setVisible(False)
+
+        self.poster_textbox_item = QGraphicsPixmapItem()
+        self.poster_textbox_item.setParentItem(self.clip_item)
+        self.poster_textbox_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.poster_textbox_item.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.poster_textbox_item.setZValue(7_000)
+        self.poster_textbox_item.setVisible(False)
+
         self.frame_item = QGraphicsRectItem()
         frame_pen = QPen(Qt.PenStyle.NoPen)
         self.frame_item.setPen(frame_pen)
@@ -180,6 +253,7 @@ class ARPlusWindow(QMainWindow):
         self.scene.addItem(self.frame_item)
 
         self._build_ui()
+        self._load_guides()
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
 
@@ -214,7 +288,14 @@ class ARPlusWindow(QMainWindow):
         self.setCentralWidget(root)
         layout = QHBoxLayout(root)
 
-        layout.addWidget(self._build_left_panel(), 1)
+        self.left_panel = self._build_left_panel()
+        self.left_panel.setMinimumWidth(380)
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setWidget(self.left_panel)
+        self.left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        layout.addWidget(self.left_scroll, 1)
 
         center = QVBoxLayout()
         top_row = QHBoxLayout()
@@ -229,7 +310,25 @@ class ARPlusWindow(QMainWindow):
         center.addWidget(self.view, 1)
         layout.addLayout(center, 3)
 
-        layout.addWidget(self._build_right_panel(), 1)
+        self.right_panel = self._build_right_panel()
+        self.right_panel.setMinimumWidth(360)
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setWidget(self.right_panel)
+        self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        layout.addWidget(self.right_scroll, 1)
+        self._apply_responsive_side_widths()
+
+    def _apply_responsive_side_widths(self):
+        if not hasattr(self, "left_scroll") or not hasattr(self, "right_scroll"):
+            return
+        total_width = max(1, self.width())
+        side_width = max(300, min(460, int(total_width * 0.24)))
+        self.left_scroll.setMinimumWidth(side_width)
+        self.left_scroll.setMaximumWidth(side_width)
+        self.right_scroll.setMinimumWidth(side_width)
+        self.right_scroll.setMaximumWidth(side_width)
 
     def _build_left_panel(self):
         panel = QWidget()
@@ -237,15 +336,31 @@ class ARPlusWindow(QMainWindow):
 
         resources_box = QGroupBox("Ressources")
         resources_layout = QVBoxLayout(resources_box)
+        import_box = QGroupBox("Importer")
+        import_layout = QVBoxLayout(import_box)
         bg_btn = QPushButton("Importer Background")
         bg_btn.clicked.connect(lambda: self._import_layer("background"))
         char_btn = QPushButton("Importer Personnage")
         char_btn.clicked.connect(lambda: self._import_layer("character"))
         logo_btn = QPushButton("Importer Logo")
         logo_btn.clicked.connect(lambda: self._import_layer("logo"))
-        resources_layout.addWidget(bg_btn)
-        resources_layout.addWidget(char_btn)
-        resources_layout.addWidget(logo_btn)
+        import_layout.addWidget(bg_btn)
+        import_layout.addWidget(char_btn)
+        import_layout.addWidget(logo_btn)
+        self.show_guides_check = QCheckBox("Afficher gabarits (25%)")
+        self.show_guides_check.setChecked(self.guides_visible)
+        self.show_guides_check.toggled.connect(self._on_guides_visible_toggled)
+        import_layout.addWidget(self.show_guides_check)
+        self.poster_guide_combo = QComboBox()
+        self.poster_guide_combo.addItem("Poster gabarit 1", "1")
+        self.poster_guide_combo.addItem("Poster gabarit 2", "2")
+        poster_guide_idx = self.poster_guide_combo.findData(self.poster_guide_variant)
+        if poster_guide_idx >= 0:
+            self.poster_guide_combo.setCurrentIndex(poster_guide_idx)
+        self.poster_guide_combo.currentIndexChanged.connect(self._on_poster_guide_variant_changed)
+        import_layout.addWidget(QLabel("Choix gabarit poster"))
+        import_layout.addWidget(self.poster_guide_combo)
+        resources_layout.addWidget(import_box)
 
         self.logo_text_checkbox = QCheckBox("Logo texte")
         self.logo_text_checkbox.toggled.connect(self._on_logo_text_toggle)
@@ -270,32 +385,13 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_line_spacing_spin.setSuffix(" %")
         self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
         self.logo_text_line_spacing_spin.valueChanged.connect(self._on_logo_text_line_spacing_changed)
-        self.logo_color_btn = QPushButton("Couleur du logo texte")
-        self.logo_color_btn.clicked.connect(self._pick_logo_color)
-        self.logo_shadow_check = QCheckBox("Ombre portee logo")
-        self.logo_shadow_check.toggled.connect(self._on_logo_shadow_toggled)
-        self.logo_shadow_distance_spin = QSpinBox()
-        self.logo_shadow_distance_spin.setRange(0, 500)
-        self.logo_shadow_distance_spin.setSuffix(" px")
-        self.logo_shadow_distance_spin.setValue(self.logo_shadow_distance)
-        self.logo_shadow_distance_spin.valueChanged.connect(self._on_logo_shadow_distance_changed)
-        self.logo_shadow_blur_spin = QSpinBox()
-        self.logo_shadow_blur_spin.setRange(0, 150)
-        self.logo_shadow_blur_spin.setSuffix(" px")
-        self.logo_shadow_blur_spin.setValue(self.logo_shadow_blur)
-        self.logo_shadow_blur_spin.valueChanged.connect(self._on_logo_shadow_blur_changed)
-        self.logo_shadow_angle_spin = QSpinBox()
-        self.logo_shadow_angle_spin.setRange(-180, 180)
-        self.logo_shadow_angle_spin.setSuffix(" deg")
-        self.logo_shadow_angle_spin.setValue(self.logo_shadow_angle)
-        self.logo_shadow_angle_spin.valueChanged.connect(self._on_logo_shadow_angle_changed)
-        self.logo_shadow_opacity_spin = QSpinBox()
-        self.logo_shadow_opacity_spin.setRange(0, 100)
-        self.logo_shadow_opacity_spin.setSuffix(" %")
-        self.logo_shadow_opacity_spin.setValue(self.logo_shadow_opacity)
-        self.logo_shadow_opacity_spin.valueChanged.connect(self._on_logo_shadow_opacity_changed)
-        self.logo_shadow_color_btn = QPushButton("Couleur ombre")
-        self.logo_shadow_color_btn.clicked.connect(self._pick_logo_shadow_color)
+        self.poster_textbox_check = QCheckBox("TextBox poster")
+        self.poster_textbox_check.setChecked(self.poster_textbox_enabled)
+        self.poster_textbox_check.toggled.connect(self._on_poster_textbox_toggled)
+        self.poster_textbox_input = QLineEdit(self.poster_textbox_text)
+        self.poster_textbox_input.setPlaceholderText("Texte text box (poster)")
+        self.poster_textbox_input.textChanged.connect(self._on_poster_textbox_changed)
+        
         self.gradient_enable_check = QCheckBox("Activer degrade")
         self.gradient_enable_check.toggled.connect(self._on_gradient_enabled_toggled)
         self.gradient_mode_combo = QComboBox()
@@ -323,31 +419,84 @@ class ARPlusWindow(QMainWindow):
         self.gradient_color_b_btn = QPushButton("Couleur degrade B")
         self.gradient_color_b_btn.clicked.connect(self._pick_gradient_color_b)
 
-        form = QFormLayout()
-        form.addRow("Contenu", self.logo_text_input)
-        form.addRow("Taille", self.logo_text_size_spin)
-        form.addRow("Alignement", self.logo_text_align_combo)
-        form.addRow(self.logo_text_upper_check)
-        form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
-        form.addRow(self.logo_shadow_check)
-        form.addRow("Distance ombre", self.logo_shadow_distance_spin)
-        form.addRow("Lissage ombre", self.logo_shadow_blur_spin)
-        form.addRow("Angle ombre", self.logo_shadow_angle_spin)
-        form.addRow("Opacite ombre", self.logo_shadow_opacity_spin)
+        self.logo_shadow_check = QCheckBox("Ombre portee logo")
+        self.logo_shadow_check.toggled.connect(self._on_logo_shadow_toggled)
+        self.logo_shadow_distance_spin = QSpinBox()
+        self.logo_shadow_distance_spin.setRange(0, 500)
+        self.logo_shadow_distance_spin.setSuffix(" px")
+        self.logo_shadow_distance_spin.setValue(self.logo_shadow_distance)
+        self.logo_shadow_distance_spin.valueChanged.connect(self._on_logo_shadow_distance_changed)
+        self.logo_shadow_blur_spin = QSpinBox()
+        self.logo_shadow_blur_spin.setRange(0, 150)
+        self.logo_shadow_blur_spin.setSuffix(" px")
+        self.logo_shadow_blur_spin.setValue(self.logo_shadow_blur)
+        self.logo_shadow_blur_spin.valueChanged.connect(self._on_logo_shadow_blur_changed)
+        self.logo_shadow_angle_slider = QSlider(Qt.Orientation.Horizontal)
+        self.logo_shadow_angle_slider.setRange(0, 359)
+        self.logo_shadow_angle_slider.setValue(int(self.logo_shadow_angle) % 360)
+        self.logo_shadow_angle_slider.valueChanged.connect(self._on_logo_shadow_angle_changed)
+        self.logo_shadow_angle_label = QLabel()
+        self.logo_shadow_angle_label.setMinimumWidth(54)
+        angle_row = QWidget()
+        angle_layout = QHBoxLayout(angle_row)
+        angle_layout.setContentsMargins(0, 0, 0, 0)
+        angle_layout.addWidget(self.logo_shadow_angle_slider, 1)
+        angle_layout.addWidget(self.logo_shadow_angle_label)
+        self.logo_shadow_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.logo_shadow_opacity_slider.setRange(0, 100)
+        self.logo_shadow_opacity_slider.setValue(self.logo_shadow_opacity)
+        self.logo_shadow_opacity_slider.valueChanged.connect(self._on_logo_shadow_opacity_changed)
+        self.logo_shadow_opacity_label = QLabel()
+        self.logo_shadow_opacity_label.setMinimumWidth(54)
+        shadow_opacity_row = QWidget()
+        shadow_opacity_layout = QHBoxLayout(shadow_opacity_row)
+        shadow_opacity_layout.setContentsMargins(0, 0, 0, 0)
+        shadow_opacity_layout.addWidget(self.logo_shadow_opacity_slider, 1)
+        shadow_opacity_layout.addWidget(self.logo_shadow_opacity_label)
+        self.logo_shadow_color_btn = QPushButton("Couleur ombre")
+        self.logo_shadow_color_btn.clicked.connect(self._pick_logo_shadow_color)
+
+        text_box = QGroupBox("Texte")
+        text_layout = QVBoxLayout(text_box)
+        text_form = QFormLayout()
+        text_form.addRow(self.logo_text_checkbox)
+        text_form.addRow("Contenu", self.logo_text_input)
+        text_form.addRow("Taille", self.logo_text_size_spin)
+        text_form.addRow("Alignement", self.logo_text_align_combo)
+        text_form.addRow(self.logo_text_upper_check)
+        text_form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
+        text_form.addRow(self.poster_textbox_check)
+        text_form.addRow("Textebox", self.poster_textbox_input)
+        text_layout.addLayout(text_form)
+        resources_layout.addWidget(text_box)
+
+        shadow_box = QGroupBox("Ombre")
+        shadow_layout = QVBoxLayout(shadow_box)
+        shadow_form = QFormLayout()
+        shadow_form.addRow(self.logo_shadow_check)
+        shadow_form.addRow("Distance", self.logo_shadow_distance_spin)
+        shadow_form.addRow("Lissage", self.logo_shadow_blur_spin)
+        shadow_form.addRow("Angle", angle_row)
+        shadow_form.addRow("Opacite", shadow_opacity_row)
+        shadow_layout.addLayout(shadow_form)
+        shadow_layout.addWidget(self.logo_shadow_color_btn)
+        resources_layout.addWidget(shadow_box)
+
+        gradient_box = QGroupBox("Degrade")
+        gradient_layout = QVBoxLayout(gradient_box)
         gradient_form = QFormLayout()
         gradient_form.addRow(self.gradient_enable_check)
         gradient_form.addRow("Mode", self.gradient_mode_combo)
         gradient_form.addRow("Direction", self.gradient_direction_combo)
         gradient_form.addRow("Distance", self.gradient_distance_spin)
         gradient_form.addRow("Etirement", self.gradient_stretch_spin)
-        resources_layout.addWidget(self.logo_text_checkbox)
-        resources_layout.addLayout(form)
-        resources_layout.addLayout(gradient_form)
-        resources_layout.addWidget(self.logo_color_btn)
-        resources_layout.addWidget(self.logo_shadow_color_btn)
-        resources_layout.addWidget(self.gradient_color_a_btn)
-        resources_layout.addWidget(self.gradient_color_b_btn)
+        gradient_layout.addLayout(gradient_form)
+        gradient_layout.addWidget(self.gradient_color_a_btn)
+        gradient_layout.addWidget(self.gradient_color_b_btn)
+        resources_layout.addWidget(gradient_box)
         self._sync_gradient_controls()
+        self._sync_poster_textbox_controls()
+        self._update_shadow_slider_labels()
 
         layout.addWidget(resources_box)
 
@@ -485,6 +634,7 @@ class ARPlusWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._apply_responsive_side_widths()
         self._fit_view_to_scene()
 
     def closeEvent(self, event):
@@ -512,6 +662,27 @@ class ARPlusWindow(QMainWindow):
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
+        self._sync_poster_textbox_controls()
+
+    def _on_guides_visible_toggled(self, checked: bool):
+        self.guides_visible = checked
+        self._refresh_preview()
+
+    def _on_poster_guide_variant_changed(self):
+        if not hasattr(self, "poster_guide_combo"):
+            return
+        selected = self.poster_guide_combo.currentData()
+        if selected not in POSTER_GUIDE_FILES:
+            return
+        self.poster_guide_variant = selected
+        self._load_guides()
+        for layer_id in ["character", "logo"]:
+            layer_pixmap = self.assets[layer_id].pixmap
+            if layer_pixmap is None or layer_pixmap.isNull():
+                continue
+            self._apply_auto_placement(layer_id, "poster")
+        self._refresh_preview()
+        self._sync_layer_controls()
 
     def _on_logo_text_toggle(self, checked: bool):
         self.logo_text_enabled = checked
@@ -537,6 +708,20 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_line_spacing = value
         self._refresh_preview()
 
+    def _on_poster_textbox_toggled(self, checked: bool):
+        self.poster_textbox_enabled = checked
+        self._sync_poster_textbox_controls()
+        self._refresh_preview()
+
+    def _on_poster_textbox_changed(self, value: str):
+        upper_value = value.upper()
+        if hasattr(self, "poster_textbox_input") and upper_value != value:
+            self.poster_textbox_input.blockSignals(True)
+            self.poster_textbox_input.setText(upper_value)
+            self.poster_textbox_input.blockSignals(False)
+        self.poster_textbox_text = upper_value
+        self._refresh_preview()
+
     def _on_logo_shadow_toggled(self, checked: bool):
         self.logo_shadow_enabled = checked
         self._refresh_preview()
@@ -550,11 +735,13 @@ class ARPlusWindow(QMainWindow):
         self._refresh_preview()
 
     def _on_logo_shadow_angle_changed(self, value: int):
-        self.logo_shadow_angle = value
+        self.logo_shadow_angle = value % 360
+        self._update_shadow_slider_labels()
         self._refresh_preview()
 
     def _on_logo_shadow_opacity_changed(self, value: int):
         self.logo_shadow_opacity = value
+        self._update_shadow_slider_labels()
         self._refresh_preview()
 
     def _on_gradient_enabled_toggled(self, checked: bool):
@@ -578,6 +765,12 @@ class ARPlusWindow(QMainWindow):
     def _on_gradient_stretch_changed(self, value: int):
         self.gradient_stretch = value
         self._refresh_preview()
+
+    def _update_shadow_slider_labels(self):
+        if hasattr(self, "logo_shadow_angle_label"):
+            self.logo_shadow_angle_label.setText(f"{int(self.logo_shadow_angle)} deg")
+        if hasattr(self, "logo_shadow_opacity_label"):
+            self.logo_shadow_opacity_label.setText(f"{int(self.logo_shadow_opacity)} %")
 
     def _logo_effective_size(self) -> int:
         return self.logo_text_size
@@ -828,6 +1021,137 @@ class ARPlusWindow(QMainWindow):
             y += line_height + spacing
         return img
 
+    def _poster_textbox_display_text(self):
+        text = self.poster_textbox_text.strip()
+        return (text if text else "TEXTE BOX").upper()
+
+    def _load_poster_textbox_font(self, size: int):
+        font_candidates = [
+            "Montserrat-Bold.ttf",
+            "Arialbd.ttf",
+            "/usr/share/fonts/truetype/montserrat/Montserrat-Bold.ttf",
+            "/Library/Fonts/Montserrat-Bold.ttf",
+            "C:/Windows/Fonts/montserrat-bold.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
+        ]
+        for candidate in font_candidates:
+            try:
+                return ImageFont.truetype(candidate, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    def _build_poster_textbox_render(self, preset_id: str, canvas_w: int, canvas_h: int):
+        if preset_id != "poster" or not self.poster_textbox_enabled:
+            return None
+        text = self._poster_textbox_display_text()
+        if not text:
+            return None
+
+        base = POSTER_TEXTBOX_BASE
+        scale = canvas_w / 1600.0
+        x = int(round(base["x"] * scale))
+        y = int(round(base["y"] * scale))
+        height = max(36, int(round(base["height"] * scale)))
+        min_width = max(120, int(round(base["min_width"] * scale)))
+        padding_left = max(10, int(round(base["padding_left"] * scale)))
+        radius = max(4, int(round(base["radius"] * scale)))
+        font_size = max(20, int(round(base["font_size"] * scale)))
+        max_width = max(100, canvas_w - x)
+
+        probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        probe_draw = ImageDraw.Draw(probe)
+        font = self._load_poster_textbox_font(font_size)
+        bbox = probe_draw.textbbox((0, 0), text, font=font)
+        text_w = max(1, bbox[2] - bbox[0])
+        text_h = max(1, bbox[3] - bbox[1])
+        spaces_bbox = probe_draw.textbbox((0, 0), "  ", font=font)
+        padding_right = max(8, spaces_bbox[2] - spaces_bbox[0])
+
+        width = max(min_width, text_w + padding_left + padding_right)
+        width = min(max_width, width)
+        while (text_w + padding_left + padding_right) > width and font_size > 20:
+            font_size -= 2
+            font = self._load_poster_textbox_font(font_size)
+            bbox = probe_draw.textbbox((0, 0), text, font=font)
+            text_w = max(1, bbox[2] - bbox[0])
+            text_h = max(1, bbox[3] - bbox[1])
+            spaces_bbox = probe_draw.textbbox((0, 0), "  ", font=font)
+            padding_right = max(8, spaces_bbox[2] - spaces_bbox[0])
+
+        box_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(box_img)
+        fill_color = POSTER_TEXTBOX_BASE["fill_color"]
+        draw.rounded_rectangle(
+            (0, 0, width - 1, height - 1),
+            radius=radius,
+            fill=fill_color,
+        )
+        # Keep the right side rounded but force a straight left edge.
+        draw.rectangle((0, 0, min(radius, width - 1), height - 1), fill=fill_color)
+        box_img = self._apply_alpha_bevel(
+            box_img,
+            bevel_size=max(1, int(base["bevel_size"] * scale)),
+            bevel_strength=base["bevel_strength"],
+        )
+        draw = ImageDraw.Draw(box_img)
+        text_x = padding_left
+        text_y = int(round((height - text_h) * 0.5 - bbox[1]))
+        draw.text(
+            (text_x, text_y),
+            text,
+            fill=POSTER_TEXTBOX_BASE["text_color"],
+            font=font,
+        )
+        return box_img, x, y
+
+    def _apply_alpha_bevel(self, image: Image.Image, bevel_size: int, bevel_strength: int):
+        if bevel_size <= 0 or bevel_strength <= 0:
+            return image
+        alpha = image.getchannel("A")
+        filter_size = max(3, (bevel_size * 2) + 1)
+        inner_alpha = alpha.filter(ImageFilter.MinFilter(size=filter_size))
+        edge_alpha = ImageChops.subtract(alpha, inner_alpha)
+        if edge_alpha.getbbox() is None:
+            return image
+
+        blurred = alpha.filter(ImageFilter.GaussianBlur(radius=bevel_size))
+        light_raw = ImageChops.subtract(alpha, ImageChops.offset(blurred, bevel_size, bevel_size))
+        dark_raw = ImageChops.subtract(alpha, ImageChops.offset(blurred, -bevel_size, -bevel_size))
+        light_alpha = ImageChops.multiply(light_raw, edge_alpha).point(
+            lambda px: int(min(255, (px * bevel_strength) / 255))
+        )
+        dark_alpha = ImageChops.multiply(dark_raw, edge_alpha).point(
+            lambda px: int(min(255, (px * (bevel_strength * 0.9)) / 255))
+        )
+
+        result = image.copy()
+        shadow = Image.new("RGBA", result.size, (0, 0, 0, 0))
+        shadow.putalpha(dark_alpha)
+        result.alpha_composite(shadow)
+
+        highlight = Image.new("RGBA", result.size, (255, 255, 255, 0))
+        highlight.putalpha(light_alpha)
+        result.alpha_composite(highlight)
+        return result
+
+    def _refresh_poster_textbox_overlay(self, canvas_w: int, canvas_h: int):
+        if not hasattr(self, "poster_textbox_item"):
+            return
+        draw_data = self._build_poster_textbox_render(self.current_preset, canvas_w, canvas_h)
+        if draw_data is None:
+            self.poster_textbox_item.setVisible(False)
+            return
+        box_img, x, y = draw_data
+        pixmap = self._pil_to_qpixmap(box_img)
+        if pixmap.isNull():
+            self.poster_textbox_item.setVisible(False)
+            return
+        self.poster_textbox_item.setPixmap(pixmap)
+        self.poster_textbox_item.setOffset(0, 0)
+        self.poster_textbox_item.setPos(x, y)
+        self.poster_textbox_item.setVisible(True)
+
     def _pick_logo_color(self):
         color = QColorDialog.getColor(QColor(self.logo_text_color), self)
         if color.isValid():
@@ -993,6 +1317,8 @@ class ARPlusWindow(QMainWindow):
             layer_state["transform"]["scale"] = 1.0
             layer_state["transform"]["anchor"] = "center"
         elif layer_id == "character":
+            if layer_pixmap is not None and self._apply_guide_auto_placement(layer_id, preset_id, layer_pixmap):
+                return
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["anchor"] = "bottom"
             layer_state["transform"]["x"] = width * 0.5
@@ -1010,6 +1336,8 @@ class ARPlusWindow(QMainWindow):
             layer_state["transform"]["y"] = height * 0.5
             layer_state["transform"]["scale"] = 1.0
         elif layer_id == "logo":
+            if layer_pixmap is not None and self._apply_guide_auto_placement(layer_id, preset_id, layer_pixmap):
+                return
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["scale"] = 1.0
             layer_state["transform"]["x"] = width * 0.5
@@ -1019,6 +1347,7 @@ class ARPlusWindow(QMainWindow):
     def _refresh_preview(self):
         preset_meta = PRESETS[self.current_preset]
         canvas_w, canvas_h = preset_meta["size"]
+        self._refresh_guide_overlay(canvas_w, canvas_h)
 
         for layer in ["background", "character", "gradient", "logo"]:
             item = self.items[layer]
@@ -1052,6 +1381,7 @@ class ARPlusWindow(QMainWindow):
                 pos_y = layer_state["transform"]["y"]
                 item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
                 item.setPos(pos_x, pos_y)
+        self._refresh_poster_textbox_overlay(canvas_w, canvas_h)
         self._update_position_info()
 
     def _preview_pixmap(self, layer_id: str, canvas_w: int, canvas_h: int) -> QPixmap:
@@ -1227,6 +1557,18 @@ class ARPlusWindow(QMainWindow):
 
         self._sync_logo_controls()
 
+    def _apply_poster_textbox_settings(self, raw_textbox):
+        if not isinstance(raw_textbox, dict):
+            self._sync_poster_textbox_controls()
+            return
+        enabled = raw_textbox.get("enabled")
+        if isinstance(enabled, bool):
+            self.poster_textbox_enabled = enabled
+        text = raw_textbox.get("text")
+        if isinstance(text, str):
+            self.poster_textbox_text = text.upper()
+        self._sync_poster_textbox_controls()
+
     def _apply_logo_shadow_settings(self, raw_logo_shadow):
         if not isinstance(raw_logo_shadow, dict):
             self.logo_shadow_enabled = False
@@ -1247,10 +1589,8 @@ class ARPlusWindow(QMainWindow):
             0,
             min(150, int(round(self._to_float(raw_logo_shadow.get("blur"), self.logo_shadow_blur)))),
         )
-        self.logo_shadow_angle = max(
-            -180,
-            min(180, int(round(self._to_float(raw_logo_shadow.get("angle"), self.logo_shadow_angle)))),
-        )
+        raw_angle = int(round(self._to_float(raw_logo_shadow.get("angle"), self.logo_shadow_angle)))
+        self.logo_shadow_angle = raw_angle % 360
         self.logo_shadow_opacity = max(
             0,
             min(100, int(round(self._to_float(raw_logo_shadow.get("opacity"), self.logo_shadow_opacity)))),
@@ -1296,6 +1636,46 @@ class ARPlusWindow(QMainWindow):
         )
         self._sync_gradient_controls()
 
+    def _apply_guide_settings(self, raw_guides):
+        if not isinstance(raw_guides, dict):
+            return
+        visible = raw_guides.get("visible")
+        if isinstance(visible, bool):
+            self.guides_visible = visible
+        opacity = raw_guides.get("opacity")
+        if isinstance(opacity, (int, float)):
+            self.guides_opacity = max(0.1, min(0.6, float(opacity)))
+        poster_variant = raw_guides.get("poster_variant")
+        if isinstance(poster_variant, str) and poster_variant in POSTER_GUIDE_FILES:
+            self.poster_guide_variant = poster_variant
+        if hasattr(self, "show_guides_check"):
+            self.show_guides_check.blockSignals(True)
+            self.show_guides_check.setChecked(self.guides_visible)
+            self.show_guides_check.blockSignals(False)
+        if hasattr(self, "poster_guide_combo"):
+            self.poster_guide_combo.blockSignals(True)
+            guide_idx = self.poster_guide_combo.findData(self.poster_guide_variant)
+            if guide_idx >= 0:
+                self.poster_guide_combo.setCurrentIndex(guide_idx)
+            self.poster_guide_combo.blockSignals(False)
+        if hasattr(self, "guide_item"):
+            self.guide_item.setOpacity(self.guides_opacity)
+        self._load_guides()
+
+    def _sync_poster_textbox_controls(self):
+        if not hasattr(self, "poster_textbox_check"):
+            return
+        self.poster_textbox_check.blockSignals(True)
+        self.poster_textbox_check.setChecked(self.poster_textbox_enabled)
+        self.poster_textbox_check.blockSignals(False)
+        self.poster_textbox_input.blockSignals(True)
+        self.poster_textbox_input.setText(self.poster_textbox_text)
+        self.poster_textbox_input.blockSignals(False)
+
+        allowed = self.current_preset == "poster"
+        self.poster_textbox_check.setEnabled(allowed)
+        self.poster_textbox_input.setEnabled(allowed and self.poster_textbox_enabled)
+
     def _sync_logo_controls(self):
         self.logo_text_checkbox.blockSignals(True)
         self.logo_text_checkbox.setChecked(self.logo_text_enabled)
@@ -1335,13 +1715,26 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_blur_spin.setValue(self.logo_shadow_blur)
         self.logo_shadow_blur_spin.blockSignals(False)
 
-        self.logo_shadow_angle_spin.blockSignals(True)
-        self.logo_shadow_angle_spin.setValue(self.logo_shadow_angle)
-        self.logo_shadow_angle_spin.blockSignals(False)
+        self.logo_shadow_angle_slider.blockSignals(True)
+        self.logo_shadow_angle_slider.setValue(int(self.logo_shadow_angle) % 360)
+        self.logo_shadow_angle_slider.blockSignals(False)
 
-        self.logo_shadow_opacity_spin.blockSignals(True)
-        self.logo_shadow_opacity_spin.setValue(self.logo_shadow_opacity)
-        self.logo_shadow_opacity_spin.blockSignals(False)
+        self.logo_shadow_opacity_slider.blockSignals(True)
+        self.logo_shadow_opacity_slider.setValue(self.logo_shadow_opacity)
+        self.logo_shadow_opacity_slider.blockSignals(False)
+
+        if hasattr(self, "show_guides_check"):
+            self.show_guides_check.blockSignals(True)
+            self.show_guides_check.setChecked(self.guides_visible)
+            self.show_guides_check.blockSignals(False)
+        if hasattr(self, "poster_guide_combo"):
+            self.poster_guide_combo.blockSignals(True)
+            guide_idx = self.poster_guide_combo.findData(self.poster_guide_variant)
+            if guide_idx >= 0:
+                self.poster_guide_combo.setCurrentIndex(guide_idx)
+            self.poster_guide_combo.blockSignals(False)
+        self._sync_poster_textbox_controls()
+        self._update_shadow_slider_labels()
 
     def _sync_gradient_controls(self):
         if not hasattr(self, "gradient_enable_check"):
@@ -1378,6 +1771,142 @@ class ARPlusWindow(QMainWindow):
         self.gradient_stretch_spin.setEnabled(controls_enabled)
         self.gradient_color_a_btn.setEnabled(controls_enabled)
         self.gradient_color_b_btn.setEnabled(controls_enabled and self.gradient_mode == "double")
+
+    def _guide_path_for_preset(self, preset_id: str):
+        asset_dir = self.program_root / "asset"
+        if preset_id == "poster":
+            ordered = []
+            for name in POSTER_GUIDE_FILES.get(self.poster_guide_variant, []):
+                if name not in ordered:
+                    ordered.append(name)
+            for variant in ["1", "2"]:
+                for name in POSTER_GUIDE_FILES.get(variant, []):
+                    if name not in ordered:
+                        ordered.append(name)
+            for candidate_name in ordered:
+                candidate = asset_dir / candidate_name
+                if candidate.exists():
+                    return candidate
+            return None
+        for candidate_name in GUIDE_FILE_PATTERNS.get(preset_id, []):
+            candidate = asset_dir / candidate_name
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _color_bbox(self, image_rgb: Image.Image, rgb: Tuple[int, int, int], tolerance: int):
+        color_layer = Image.new("RGB", image_rgb.size, rgb)
+        diff = ImageChops.difference(image_rgb, color_layer)
+        channel_r, channel_g, channel_b = diff.split()
+        mask_r = channel_r.point(lambda value: 255 if value <= tolerance else 0)
+        mask_g = channel_g.point(lambda value: 255 if value <= tolerance else 0)
+        mask_b = channel_b.point(lambda value: 255 if value <= tolerance else 0)
+        mask = ImageChops.multiply(mask_r, ImageChops.multiply(mask_g, mask_b))
+        bbox = mask.getbbox()
+        if bbox is None:
+            return None
+        x0, y0, x1, y1 = bbox
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return bbox
+
+    def _extract_guide_regions(self, image_rgb: Image.Image):
+        width, height = image_rgb.size
+        regions: Dict[str, Tuple[float, float, float, float]] = {}
+        for layer_id, color in GUIDE_COLOR_MAP.items():
+            bbox = self._color_bbox(image_rgb, color, GUIDE_COLOR_TOLERANCE)
+            if bbox is None:
+                continue
+            x0, y0, x1, y1 = bbox
+            regions[layer_id] = (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
+        if "background" not in regions:
+            regions["background"] = (0.0, 0.0, float(width), float(height))
+        return regions
+
+    def _load_guides(self):
+        self.guide_pixmaps = {}
+        self.guide_regions = {}
+        for preset_id, meta in PRESETS.items():
+            if preset_id == "logo":
+                continue
+            guide_path = self._guide_path_for_preset(preset_id)
+            if guide_path is None:
+                continue
+            try:
+                canvas_w, canvas_h = meta["size"]
+                guide_rgb = Image.open(guide_path).convert("RGB")
+                if guide_rgb.size != (canvas_w, canvas_h):
+                    guide_rgb = guide_rgb.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
+                self.guide_regions[preset_id] = self._extract_guide_regions(guide_rgb)
+                self.guide_pixmaps[preset_id] = self._pil_to_qpixmap(guide_rgb.convert("RGBA"))
+            except Exception as exc:
+                self._log(f"Avertissement: gabarit non charge ({guide_path.name}): {exc}")
+        self._refresh_guide_overlay(*PRESETS[self.current_preset]["size"])
+
+    def _guide_region_for_layer(self, preset_id: str, layer_id: str):
+        regions = self.guide_regions.get(preset_id, {})
+        return regions.get(layer_id)
+
+    def _refresh_guide_overlay(self, canvas_w: int, canvas_h: int):
+        if not hasattr(self, "guide_item"):
+            return
+        if not self.guides_visible or self.current_preset == "logo":
+            self.guide_item.setVisible(False)
+            return
+        guide_pixmap = self.guide_pixmaps.get(self.current_preset)
+        if guide_pixmap is None or guide_pixmap.isNull():
+            self.guide_item.setVisible(False)
+            return
+        if guide_pixmap.width() != canvas_w or guide_pixmap.height() != canvas_h:
+            draw_pixmap = guide_pixmap.scaled(
+                canvas_w,
+                canvas_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        else:
+            draw_pixmap = guide_pixmap
+        self.guide_item.setPixmap(draw_pixmap)
+        self.guide_item.setOffset(0, 0)
+        self.guide_item.setPos(0, 0)
+        self.guide_item.setOpacity(self.guides_opacity)
+        self.guide_item.setVisible(True)
+
+    def _apply_guide_auto_placement(
+        self,
+        layer_id: str,
+        preset_id: str,
+        layer_pixmap: QPixmap,
+    ) -> bool:
+        region = self._guide_region_for_layer(preset_id, layer_id)
+        if region is None:
+            return False
+        box_x, box_y, box_w, box_h = region
+        if box_w <= 1 or box_h <= 1:
+            return False
+        src_w = max(1, layer_pixmap.width())
+        src_h = max(1, layer_pixmap.height())
+        canvas_w, canvas_h = PRESETS[preset_id]["size"]
+        base_ratio = min(canvas_w / src_w, canvas_h / src_h)
+        if base_ratio <= 0:
+            return False
+        region_ratio = min(box_w / src_w, box_h / src_h)
+        layer_state = self._layer_state(preset_id, layer_id)
+        layer_state["fit_mode"] = "contain"
+        layer_state["transform"]["x"] = box_x + (box_w * 0.5)
+        if layer_id == "character":
+            # Keep character top at yellow-circle top and force bottom to touch canvas bottom.
+            target_height = max(1.0, canvas_h - box_y)
+            target_scale = max(0.01, target_height / (src_h * base_ratio))
+            layer_state["transform"]["anchor"] = "bottom"
+            layer_state["transform"]["scale"] = target_scale
+            layer_state["transform"]["y"] = canvas_h
+        else:
+            target_scale = max(0.01, region_ratio / base_ratio)
+            layer_state["transform"]["anchor"] = "center"
+            layer_state["transform"]["scale"] = target_scale
+            layer_state["transform"]["y"] = box_y + (box_h * 0.5)
+        return True
 
     def _resolve_snapshot_asset_path(
         self,
@@ -1443,8 +1972,10 @@ class ARPlusWindow(QMainWindow):
 
         self.state = self._merge_state_from_snapshot(payload.get("state"))
         self._apply_logo_text_settings(payload.get("logo_text"))
+        self._apply_poster_textbox_settings(payload.get("poster_textbox"))
         self._apply_logo_shadow_settings(payload.get("logo_shadow"))
         self._apply_gradient_settings(payload.get("gradient"))
+        self._apply_guide_settings(payload.get("guides"))
         self._apply_selected_exports(payload.get("selected_exports"))
 
         base_name = payload.get("base_name")
@@ -1494,6 +2025,7 @@ class ARPlusWindow(QMainWindow):
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
+        self._sync_poster_textbox_controls()
         self._update_position_info()
         self._log(f"Sauvegarde chargee: {snapshot_file}")
 
@@ -1555,6 +2087,10 @@ class ARPlusWindow(QMainWindow):
                 "line_spacing": self.logo_text_line_spacing,
                 "color": self.logo_text_color,
             },
+            "poster_textbox": {
+                "enabled": self.poster_textbox_enabled,
+                "text": self.poster_textbox_text,
+            },
             "logo_shadow": {
                 "enabled": self.logo_shadow_enabled,
                 "distance": self.logo_shadow_distance,
@@ -1571,6 +2107,11 @@ class ARPlusWindow(QMainWindow):
                 "color_b": self.gradient_color_b,
                 "distance": self.gradient_distance,
                 "stretch": self.gradient_stretch,
+            },
+            "guides": {
+                "visible": self.guides_visible,
+                "opacity": self.guides_opacity,
+                "poster_variant": self.poster_guide_variant,
             },
             "state": copy.deepcopy(self.state),
         }
@@ -1645,9 +2186,11 @@ class ARPlusWindow(QMainWindow):
         self.logo_text = ""
         self.logo_text_size = 300
         self.logo_text_align = "center"
-        self.logo_text_force_upper = False
+        self.logo_text_force_upper = True
         self.logo_text_line_spacing = 100
         self.logo_text_color = "#FFFFFF"
+        self.poster_textbox_enabled = True
+        self.poster_textbox_text = "TEXTE BOX"
         self.logo_shadow_enabled = False
         self.logo_shadow_distance = 16
         self.logo_shadow_blur = 12
@@ -1661,11 +2204,15 @@ class ARPlusWindow(QMainWindow):
         self.gradient_color_b = "#FFFFFF"
         self.gradient_distance = 40
         self.gradient_stretch = 100
+        self.guides_visible = True
+        self.guides_opacity = GUIDE_OPACITY_DEFAULT
+        self.poster_guide_variant = "1"
 
         self.base_name_input.setText("Name")
         self._set_all_exports_checked(True)
         self._sync_logo_controls()
         self._sync_gradient_controls()
+        self._load_guides()
 
         preset_index = self.preset_combo.findData(self.current_preset)
         if preset_index >= 0:
@@ -1677,6 +2224,7 @@ class ARPlusWindow(QMainWindow):
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
         self._sync_layer_controls()
+        self._sync_poster_textbox_controls()
         self._update_position_info()
         self._log("Nouveau projet initialise (visuels supprimes).")
 
@@ -1760,6 +2308,11 @@ class ARPlusWindow(QMainWindow):
                 alpha = alpha.point(lambda px: int(px * layer_state["opacity"]))
             canvas.paste(rendered, (x, y), alpha)
 
+        textbox_draw = self._build_poster_textbox_render(preset_id, canvas_w, canvas_h)
+        if textbox_draw is not None:
+            textbox_img, textbox_x, textbox_y = textbox_draw
+            canvas.alpha_composite(textbox_img, (textbox_x, textbox_y))
+
         file_stub = preset["filename"]
         ext = "png" if preset.get("png") else "jpg"
         file_name = f"{file_stub}-{base_name}.{ext}"
@@ -1838,6 +2391,11 @@ class ARPlusWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app_icon_path = Path(__file__).resolve().parent / "asset" / "icon.ico"
+    if app_icon_path.exists():
+        app_icon = QIcon(str(app_icon_path))
+        if not app_icon.isNull():
+            app.setWindowIcon(app_icon)
     window = ARPlusWindow()
     window.show()
     return app.exec()
@@ -1845,5 +2403,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
