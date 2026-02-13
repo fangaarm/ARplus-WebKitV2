@@ -509,6 +509,8 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_line_spacing_spin.setSuffix(" %")
         self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
         self.logo_text_line_spacing_spin.valueChanged.connect(self._on_logo_text_line_spacing_changed)
+        self.logo_text_color_btn = QPushButton("Couleur texte")
+        self.logo_text_color_btn.clicked.connect(self._pick_logo_color)
         self.poster_textbox_check = QCheckBox("TextBox poster")
         self.poster_textbox_check.setChecked(self.poster_textbox_enabled)
         self.poster_textbox_check.toggled.connect(self._on_poster_textbox_toggled)
@@ -624,10 +626,17 @@ class ARPlusWindow(QMainWindow):
         text_form.addRow("Alignement", self.logo_text_align_combo)
         text_form.addRow(self.logo_text_upper_check)
         text_form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
-        text_form.addRow(self.poster_textbox_check)
-        text_form.addRow("Textebox", self.poster_textbox_input)
+        text_form.addRow(self.logo_text_color_btn)
         text_layout.addLayout(text_form)
         resources_layout.addWidget(text_box)
+
+        textbox_box = QGroupBox("TextBox poster")
+        textbox_layout = QVBoxLayout(textbox_box)
+        textbox_form = QFormLayout()
+        textbox_form.addRow(self.poster_textbox_check)
+        textbox_form.addRow("Textebox", self.poster_textbox_input)
+        textbox_layout.addLayout(textbox_form)
+        resources_layout.addWidget(textbox_box)
 
         shadow_box = QGroupBox("Ombre")
         shadow_layout = QVBoxLayout(shadow_box)
@@ -661,9 +670,12 @@ class ARPlusWindow(QMainWindow):
 
         layer_box = QGroupBox("Contrôles de calque")
         layer_layout = QFormLayout(layer_box)
-        layer_buttons_row = QHBoxLayout()
-        layer_buttons_row.setContentsMargins(0, 0, 0, 0)
-        layer_buttons_row.setSpacing(6)
+        layer_buttons_top_row = QHBoxLayout()
+        layer_buttons_top_row.setContentsMargins(0, 0, 0, 0)
+        layer_buttons_top_row.setSpacing(6)
+        layer_buttons_bottom_row = QHBoxLayout()
+        layer_buttons_bottom_row.setContentsMargins(0, 0, 0, 0)
+        layer_buttons_bottom_row.setSpacing(6)
         self.layer_buttons: Dict[str, QPushButton] = {}
         layer_labels = {
             "character": "Perso",
@@ -688,7 +700,14 @@ class ARPlusWindow(QMainWindow):
                 stretch = 1
             btn.clicked.connect(lambda _checked, lid=layer: self._set_active_layer(lid))
             self.layer_buttons[layer] = btn
-            layer_buttons_row.addWidget(btn, stretch)
+            target_row = layer_buttons_bottom_row if layer in {"background", "logo"} else layer_buttons_top_row
+            target_row.addWidget(btn, stretch)
+        layer_buttons_widget = QWidget()
+        layer_buttons_col = QVBoxLayout(layer_buttons_widget)
+        layer_buttons_col.setContentsMargins(0, 0, 0, 0)
+        layer_buttons_col.setSpacing(4)
+        layer_buttons_col.addLayout(layer_buttons_top_row)
+        layer_buttons_col.addLayout(layer_buttons_bottom_row)
 
         self.visible_check = QCheckBox("Visible")
         self.visible_check.setChecked(True)
@@ -725,7 +744,7 @@ class ARPlusWindow(QMainWindow):
         center_btn.clicked.connect(self._on_center_layer)
         reset_btn.clicked.connect(self._on_reset_layer)
 
-        layer_layout.addRow("Calque", layer_buttons_row)
+        layer_layout.addRow("Calque", layer_buttons_widget)
         layer_layout.addRow(self.visible_check)
         layer_layout.addRow("Opacite", opacity_row)
         layer_layout.addRow("Echelle", scale_row)
@@ -1007,25 +1026,25 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_distance = max(0, min(50, value))
         self._update_shadow_slider_labels()
         self._invalidate_presets_preview()
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_logo_shadow_blur_changed(self, value: int):
         self.logo_shadow_blur = max(0, min(50, value))
         self._update_shadow_slider_labels()
         self._invalidate_presets_preview()
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_logo_shadow_angle_changed(self, value: int):
         self.logo_shadow_angle = value % 360
         self._update_shadow_slider_labels()
         self._invalidate_presets_preview()
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_logo_shadow_opacity_changed(self, value: int):
         self.logo_shadow_opacity = value
         self._update_shadow_slider_labels()
         self._invalidate_presets_preview()
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_gradient_enabled_toggled(self, checked: bool):
         self._gradient_config()["enabled"] = checked
@@ -1048,13 +1067,13 @@ class ARPlusWindow(QMainWindow):
         self._gradient_config()["distance"] = value
         self._update_gradient_slider_labels()
         self._invalidate_presets_preview([self.current_preset])
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_gradient_stretch_changed(self, value: int):
         self._gradient_config()["stretch"] = value
         self._update_gradient_slider_labels()
         self._invalidate_presets_preview([self.current_preset])
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _update_shadow_slider_labels(self):
         if hasattr(self, "logo_shadow_distance_label"):
@@ -1474,13 +1493,13 @@ class ARPlusWindow(QMainWindow):
         layer = self._selected_layer()
         self._layer_state(self.current_preset, layer)["opacity"] = value / 100
         self._update_slider_value_labels()
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_scale_changed(self, value: int):
         layer = self._selected_layer()
         self._layer_state(self.current_preset, layer)["transform"]["scale"] = value / 100
         self._update_slider_value_labels()
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
 
     def _on_reset_layer(self):
         layer = self._selected_layer()
@@ -1514,13 +1533,13 @@ class ARPlusWindow(QMainWindow):
         self._layer_state(self.current_preset, layer_id)["transform"]["x"] = x
         self._layer_state(self.current_preset, layer_id)["transform"]["y"] = y
         self._update_position_info()
-        self._request_presets_preview_refresh(preset_ids=[self.current_preset])
+        self._schedule_layer_move_preview_refresh()
 
     def _on_wheel_scaled(self, delta: float):
         layer = self._selected_layer()
         layer_state = self._layer_state(self.current_preset, layer)
         layer_state["transform"]["scale"] = max(0.0, min(1.0, layer_state["transform"]["scale"] + delta))
-        self._refresh_preview()
+        self._schedule_live_preview_refresh()
         self._sync_layer_controls()
 
     def _on_layer_clicked(self, layer_id: str):
