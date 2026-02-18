@@ -1357,11 +1357,17 @@ class ARPlusWindow(QMainWindow):
             y += line_height + spacing
         return img
 
-    def _layer_offsets(self, layer_id: str, layer_state: dict, layer_w: int, layer_h: int) -> Tuple[float, float]:
+    def _layer_offsets(
+        self,
+        preset_id: str,
+        layer_id: str,
+        layer_state: dict,
+        layer_w: int,
+        layer_h: int,
+    ) -> Tuple[float, float]:
         if layer_id in CHARACTER_LAYERS:
             return (-layer_w / 2, -layer_h)
-        anchor = str(layer_state.get("transform", {}).get("anchor", "center")).lower()
-        if anchor == "bottom":
+        if preset_id == "logo" and layer_id == "logo":
             return (-layer_w / 2, -layer_h)
         return (-layer_w / 2, -layer_h / 2)
 
@@ -1750,7 +1756,13 @@ class ARPlusWindow(QMainWindow):
             else:
                 pos_x = layer_state["transform"]["x"]
                 pos_y = layer_state["transform"]["y"]
-                offset_x, offset_y = self._layer_offsets(layer, layer_state, pixmap.width(), pixmap.height())
+                offset_x, offset_y = self._layer_offsets(
+                    self.current_preset,
+                    layer,
+                    layer_state,
+                    pixmap.width(),
+                    pixmap.height(),
+                )
                 item.setOffset(offset_x, offset_y)
                 item.setPos(pos_x, pos_y)
         self._refresh_poster_textbox_overlay(canvas_w, canvas_h)
@@ -1797,7 +1809,13 @@ class ARPlusWindow(QMainWindow):
             else:
                 tx = layer_state["transform"]["x"] * scale
                 ty = layer_state["transform"]["y"] * scale
-                offset_x, offset_y = self._layer_offsets(layer, layer_state, lw, lh)
+                offset_x, offset_y = self._layer_offsets(
+                    preset_id,
+                    layer,
+                    layer_state,
+                    lw,
+                    lh,
+                )
                 x = int(tx + offset_x)
                 y = int(ty + offset_y)
 
