@@ -75,6 +75,7 @@ POSTER_TEXTBOX_BASE = {
     "fill_color": "#0B5FA6",
     "text_color": "#F2F3EE",
 }
+LOGO_PRESET_MIN_SCALE = 1.30
 GUIDE_FILE_PATTERNS = {
     "fullscreen": [
         "FullScreen+Logo-APPTV-3480x876-gabarit.jpg",
@@ -349,9 +350,10 @@ class ARPlusWindow(QMainWindow):
             if preset_id == "logo":
                 state[preset_id]["logo"]["transform"]["anchor"] = "bottom"
                 state[preset_id]["logo"]["transform"]["y"] = height
+                state[preset_id]["logo"]["transform"]["scale"] = LOGO_PRESET_MIN_SCALE
             else:
                 state[preset_id]["logo"]["transform"]["y"] = height * 0.5
-            state[preset_id]["logo"]["transform"]["scale"] = 1.0
+                state[preset_id]["logo"]["transform"]["scale"] = 1.0
         return state
 
     def _build_ui(self):
@@ -1363,6 +1365,20 @@ class ARPlusWindow(QMainWindow):
             return (-layer_w / 2, -layer_h)
         return (-layer_w / 2, -layer_h / 2)
 
+    def _enforce_logo_preset_layout(self, preset_id: str):
+        if preset_id != "logo":
+            return
+        width, height = PRESETS[preset_id]["size"]
+        layer_state = self._layer_state(preset_id, "logo")
+        layer_state["fit_mode"] = "contain"
+        layer_state["transform"]["anchor"] = "bottom"
+        layer_state["transform"]["x"] = width * 0.5
+        layer_state["transform"]["y"] = height
+        layer_state["transform"]["scale"] = max(
+            LOGO_PRESET_MIN_SCALE,
+            self._to_float(layer_state["transform"].get("scale"), 1.0),
+        )
+
     def _poster_textbox_display_text(self):
         text = self.poster_textbox_text.strip()
         return (text if text else "TEXTE BOX").upper()
@@ -1688,7 +1704,7 @@ class ARPlusWindow(QMainWindow):
             if layer_pixmap is not None and self._apply_guide_auto_placement(layer_id, preset_id, layer_pixmap):
                 return
             layer_state["fit_mode"] = "contain"
-            layer_state["transform"]["scale"] = 1.0
+            layer_state["transform"]["scale"] = LOGO_PRESET_MIN_SCALE if preset_id == "logo" else 1.0
             layer_state["transform"]["anchor"] = "bottom" if preset_id == "logo" else "center"
             if preset_id == "logo":
                 # In logo preset, keep default placement centered and bottom-aligned.
@@ -1700,6 +1716,7 @@ class ARPlusWindow(QMainWindow):
 
     def _refresh_preview(self):
         preset_meta = PRESETS[self.current_preset]
+        self._enforce_logo_preset_layout(self.current_preset)
         canvas_w, canvas_h = preset_meta["size"]
         self._refresh_guide_overlay(canvas_w, canvas_h)
 
@@ -1749,6 +1766,7 @@ class ARPlusWindow(QMainWindow):
         textbox_scale_factor: float = 1.0,
     ):
         preset = PRESETS[preset_id]
+        self._enforce_logo_preset_layout(preset_id)
         base_w, base_h = preset["size"]
         scale = max(0.02, min(1.0, float(render_scale)))
         canvas_w = max(1, int(round(base_w * scale)))
