@@ -346,7 +346,11 @@ class ARPlusWindow(QMainWindow):
             state[preset_id]["gradient"]["transform"]["scale"] = 1.0
             state[preset_id]["logo"]["fit_mode"] = "contain"
             state[preset_id]["logo"]["transform"]["x"] = width * 0.5
-            state[preset_id]["logo"]["transform"]["y"] = height * 0.5
+            if preset_id == "logo":
+                state[preset_id]["logo"]["transform"]["anchor"] = "bottom"
+                state[preset_id]["logo"]["transform"]["y"] = height
+            else:
+                state[preset_id]["logo"]["transform"]["y"] = height * 0.5
             state[preset_id]["logo"]["transform"]["scale"] = 1.0
         return state
 
@@ -1351,6 +1355,14 @@ class ARPlusWindow(QMainWindow):
             y += line_height + spacing
         return img
 
+    def _layer_offsets(self, layer_id: str, layer_state: dict, layer_w: int, layer_h: int) -> Tuple[float, float]:
+        if layer_id in CHARACTER_LAYERS:
+            return (-layer_w / 2, -layer_h)
+        anchor = str(layer_state.get("transform", {}).get("anchor", "center")).lower()
+        if anchor == "bottom":
+            return (-layer_w / 2, -layer_h)
+        return (-layer_w / 2, -layer_h / 2)
+
     def _poster_textbox_display_text(self):
         text = self.poster_textbox_text.strip()
         return (text if text else "TEXTE BOX").upper()
@@ -1677,20 +1689,11 @@ class ARPlusWindow(QMainWindow):
                 return
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["scale"] = 1.0
-            layer_state["transform"]["anchor"] = "center"
+            layer_state["transform"]["anchor"] = "bottom" if preset_id == "logo" else "center"
             if preset_id == "logo":
-                if layer_pixmap is not None and not layer_pixmap.isNull():
-                    src_w = max(1, layer_pixmap.width())
-                    src_h = max(1, layer_pixmap.height())
-                    ratio = min(width / src_w, height / src_h)
-                    rendered_w = src_w * ratio
-                    rendered_h = src_h * ratio
-                else:
-                    rendered_w = width * 0.5
-                    rendered_h = height * 0.5
-                # In logo preset, default position is bottom-left.
-                layer_state["transform"]["x"] = rendered_w * 0.5
-                layer_state["transform"]["y"] = height - (rendered_h * 0.5)
+                # In logo preset, keep default placement centered and bottom-aligned.
+                layer_state["transform"]["x"] = width * 0.5
+                layer_state["transform"]["y"] = height
             else:
                 layer_state["transform"]["x"] = width * 0.5
                 layer_state["transform"]["y"] = height * 0.5
@@ -1730,7 +1733,8 @@ class ARPlusWindow(QMainWindow):
             else:
                 pos_x = layer_state["transform"]["x"]
                 pos_y = layer_state["transform"]["y"]
-                item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+                offset_x, offset_y = self._layer_offsets(layer, layer_state, pixmap.width(), pixmap.height())
+                item.setOffset(offset_x, offset_y)
                 item.setPos(pos_x, pos_y)
         self._refresh_poster_textbox_overlay(canvas_w, canvas_h)
         self._update_position_info()
@@ -1775,11 +1779,9 @@ class ARPlusWindow(QMainWindow):
             else:
                 tx = layer_state["transform"]["x"] * scale
                 ty = layer_state["transform"]["y"] * scale
-                x = int(tx - lw / 2)
-                if layer in CHARACTER_LAYERS:
-                    y = int(ty - lh)
-                else:
-                    y = int(ty - lh / 2)
+                offset_x, offset_y = self._layer_offsets(layer, layer_state, lw, lh)
+                x = int(tx + offset_x)
+                y = int(ty + offset_y)
 
             if log_upscale and self.assets[layer].pil and layer not in {"logo", "gradient"}:
                 sw, sh = self.assets[layer].pil.size
@@ -2446,26 +2448,47 @@ class ARPlusWindow(QMainWindow):
             return False
         src_w = max(1, layer_pixmap.width())
         src_h = max(1, layer_pixmap.height())
+        alpha_bbox = None
+        source_pil = self.assets[layer_id].pil
+        if source_pil is not None:
+            try:
+                alpha_bbox = source_pil.getchannel("A").getbbox()
+            except Exception:
+                alpha_bbox = None
+        if alpha_bbox is None:
+            alpha_bbox = (0, 0, src_w, src_h)
+        alpha_x0, alpha_y0, alpha_x1, alpha_y1 = alpha_bbox
+        alpha_w = max(1.0, float(alpha_x1 - alpha_x0))
+        alpha_h = max(1.0, float(alpha_y1 - alpha_y0))
+        alpha_cx = (float(alpha_x0) + float(alpha_x1)) * 0.5
+        alpha_cy = (float(alpha_y0) + float(alpha_y1)) * 0.5
+
         canvas_w, canvas_h = PRESETS[preset_id]["size"]
         base_ratio = min(canvas_w / src_w, canvas_h / src_h)
         if base_ratio <= 0:
             return False
-        region_ratio = min(box_w / src_w, box_h / src_h)
         layer_state = self._layer_state(preset_id, layer_id)
         layer_state["fit_mode"] = "contain"
-        layer_state["transform"]["x"] = box_x + (box_w * 0.5)
+        target_center_x = box_x + (box_w * 0.5)
         if layer_id in CHARACTER_LAYERS:
             # Keep character top at yellow-circle top and force bottom to touch canvas bottom.
             target_height = max(1.0, canvas_h - box_y)
-            target_scale = max(0.01, target_height / (src_h * base_ratio))
+            target_ratio = max(0.01, target_height / alpha_h)
+            target_scale = max(0.01, target_ratio / base_ratio)
             layer_state["transform"]["anchor"] = "bottom"
             layer_state["transform"]["scale"] = target_scale
-            layer_state["transform"]["y"] = canvas_h
+            layer_state["transform"]["x"] = target_center_x - ((alpha_cx - (src_w * 0.5)) * target_ratio)
+            layer_state["transform"]["y"] = box_y + ((src_h - alpha_y0) * target_ratio)
         else:
-            target_scale = max(0.01, region_ratio / base_ratio)
+            target_ratio = max(0.01, min(box_w / alpha_w, box_h / alpha_h))
+            target_scale = max(0.01, target_ratio / base_ratio)
             layer_state["transform"]["anchor"] = "center"
             layer_state["transform"]["scale"] = target_scale
-            layer_state["transform"]["y"] = box_y + (box_h * 0.5)
+            target_center_y = box_y + (box_h * 0.5)
+            layer_state["transform"]["x"] = target_center_x - ((alpha_cx - (src_w * 0.5)) * target_ratio)
+            layer_state["transform"]["y"] = target_center_y - (
+                (alpha_cy - (src_h * 0.5)) * target_ratio
+            )
         return True
 
     def _resolve_snapshot_asset_path(
