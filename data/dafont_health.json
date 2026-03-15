@@ -1,0 +1,22 @@
+{
+  "ok": false,
+  "checked_at": "2026-03-15 21:03:18",
+  "results_per_page": 25,
+  "groups_found": [
+    "Fantaisie",
+    "Etranger",
+    "Techno",
+    "Bitmap",
+    "Gothique",
+    "Basique",
+    "Script",
+    "Symboles",
+    "Fêtes"
+  ],
+  "missing_groups": [],
+  "sample_theme": "Fantaisie / Cartoon",
+  "sample_font": "BubbleGum",
+  "preview_ok": false,
+  "download_ready": true,
+  "error": "Verification incomplete des previews ou du telechargement."
+}
