@@ -20,9 +20,10 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, Tuple
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
-from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, Qt, Signal, QTimer
-from PySide6.QtGui import QBitmap, QColor, QFontMetrics, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut
+from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, QRectF, Qt, QLoggingCategory, QUrl, Signal, QTimer
+from PySide6.QtGui import QBitmap, QBrush, QColor, QDesktopServices, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut, QTransform
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QColorDialog,
@@ -32,6 +33,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QFormLayout,
     QGridLayout,
+    QGraphicsItem,
+    QGraphicsPathItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -50,22 +53,62 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-PROGRAM_ROOT = Path(__file__).resolve().parent
-ASSET_DIR = PROGRAM_ROOT / "asset"
+try:
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+
+    QT_MULTIMEDIA_AVAILABLE = True
+except Exception:
+    QAudioOutput = None
+    QMediaPlayer = None
+    QVideoWidget = None
+    QT_MULTIMEDIA_AVAILABLE = False
+
+if getattr(sys, "frozen", False):
+    PROGRAM_ROOT = Path(sys.executable).resolve().parent
+    BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", PROGRAM_ROOT))
+else:
+    PROGRAM_ROOT = Path(__file__).resolve().parent
+    BUNDLE_ROOT = PROGRAM_ROOT
+
+ASSET_DIR = BUNDLE_ROOT / "asset"
+ASSET_BOOT_DIR = ASSET_DIR / "Boot"
 ASSET_GUIDES_DIR = ASSET_DIR / "gabarits"
 ASSET_LOGO_DIR = ASSET_DIR / "logo"
 ASSET_TOP_DIR = ASSET_DIR / "TOP"
 ASSET_TYPO_DIR = ASSET_DIR / "Typographie"
+BOOT_VIDEO_PATH = ASSET_BOOT_DIR / "AR+_AnimLogo_V5.mp4"
+
+
+def _configure_qt_multimedia_logging():
+    suppressed_rules = [
+        "qt.multimedia.ffmpeg=false",
+        "qt.multimedia.ffmpeg.*=false",
+    ]
+    current_rules = os.environ.get("QT_LOGGING_RULES", "").strip()
+    merged_rules = [rule for rule in current_rules.split(";") if rule]
+    for rule in suppressed_rules:
+        if rule not in merged_rules:
+            merged_rules.append(rule)
+    final_rules = ";".join(merged_rules)
+    if final_rules:
+        os.environ["QT_LOGGING_RULES"] = final_rules
+        try:
+            QLoggingCategory.setFilterRules("\n".join(merged_rules))
+        except Exception:
+            pass
 
 CHARACTER_LAYERS = ["character", "character2", "character3", "character4"]
 EXTRA_CHARACTER_LAYERS = CHARACTER_LAYERS[1:]
+PRESET_VISUAL_LAYER_ID = "preset_visual"
 RENDER_LAYER_ORDER = ["background", *CHARACTER_LAYERS, "gradient", "logo"]
-CONTROL_LAYER_ORDER = [*CHARACTER_LAYERS, "background", "logo"]
+CONTROL_LAYER_ORDER = [PRESET_VISUAL_LAYER_ID, *CHARACTER_LAYERS, "background", "logo"]
 LAYER_ORDER = ["background", *CHARACTER_LAYERS, "gradient", "logo", "fx"]
 
 GUIDE_COLOR_MAP = {
@@ -228,12 +271,21 @@ GUIDE_FILE_PATTERNS = {
         "visuel-Background-no-logo-3840x2160-gabarit.jpg",
     ],
 }
+PRESET_VISUAL_PRESET_IDS = [
+    "poster",
+    "poster_no_logo",
+    "fullscreen",
+    "hero",
+    "background",
+    "background_no_logo",
+]
 TOP_CANVAS_SIZE = (1600, 2400)
 TOP_VIGNETTE_X = 680
 TOP_VIGNETTE_Y = 570
 TOP_VIGNETTE_W = 869
 TOP_VIGNETTE_H = 1346
 TOP_VIGNETTE_RADIUS = 120
+TOP_IMPORT_PREFIX = "visuel-Poster-1600x2400-"
 TOP_PRESET_IDS = [f"top_{index}" for index in range(1, 6)]
 TOP_EXPORT_IDS = list(TOP_PRESET_IDS)
 TOP_TEXTBOX_GUIDE_FILES = {
@@ -250,6 +302,12 @@ TOP_DEFAULT_CONFIG = {
 
 PRESETS = {
     "poster": {"label": "Poster", "size": (1600, 2400), "filename": "Poster_1600x2400"},
+    "poster_no_logo": {
+        "label": "Poster (sans logo)",
+        "size": (1600, 2400),
+        "filename": "Poster-no-logo_1600x2400",
+        "skip_logo": True,
+    },
     "top_1": {"label": "TOP 1", "size": TOP_CANVAS_SIZE, "filename": "TOP_1_1600x2400", "top_number": 1},
     "top_2": {"label": "TOP 2", "size": TOP_CANVAS_SIZE, "filename": "TOP_2_1600x2400", "top_number": 2},
     "top_3": {"label": "TOP 3", "size": TOP_CANVAS_SIZE, "filename": "TOP_3_1600x2400", "top_number": 3},
@@ -285,7 +343,7 @@ EXPORT_TARGETS = {
     },
     "poster_no_logo": {
         "label": "Poster (sans logo)",
-        "source_preset": "poster",
+        "source_preset": "poster_no_logo",
         "size": PRESETS["poster"]["size"],
         "file_stub": "poster-nologo-1600x2400",
         "metadata_key": "poster-nologo",
@@ -374,6 +432,16 @@ EXPORT_TARGETS = {
 
 TRANSPARENCY_VALIDATE_EXPORTS = [
     export_id for export_id in EXPORT_TARGETS if export_id != "logo"
+]
+ARPLUS_VISIBLE_PRESET_IDS = [
+    "poster",
+    "poster_no_logo",
+    "fullscreen",
+    "hero",
+    "logo",
+    "background",
+    "background_no_logo",
+    "top_1",
 ]
 
 
@@ -1123,6 +1191,7 @@ class LayerGraphicsItem(QGraphicsPixmapItem):
 
 class CanvasView(QGraphicsView):
     wheelScaled = Signal(float)
+    resized = Signal()
 
     def wheelEvent(self, event):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -1131,6 +1200,10 @@ class CanvasView(QGraphicsView):
             event.accept()
             return
         super().wheelEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
 
 
 class PresetPreviewLabel(QLabel):
@@ -1149,6 +1222,376 @@ class PresetPreviewLabel(QLabel):
         super().mousePressEvent(event)
 
 
+class BootVideoDialog(QDialog):
+    bootFinished = Signal()
+
+    def __init__(self, app_icon: QIcon | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Chargement")
+        self.setFixedSize(560, 320)
+        self.setWindowFlags(
+            Qt.WindowType.SplashScreen
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setStyleSheet("background-color: #101218;")
+        if app_icon is not None and not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+
+        self._boot_finished = False
+        self._playback_started = False
+        self.media_player = None
+        self.audio_output = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        if QT_MULTIMEDIA_AVAILABLE and BOOT_VIDEO_PATH.exists():
+            self.video_widget = QVideoWidget(self)
+            layout.addWidget(self.video_widget, 1)
+            self.audio_output = QAudioOutput(self)
+            self.audio_output.setVolume(0.0)
+            self.media_player = QMediaPlayer(self)
+            self.media_player.setAudioOutput(self.audio_output)
+            self.media_player.setVideoOutput(self.video_widget)
+            self.media_player.setSource(QUrl.fromLocalFile(str(BOOT_VIDEO_PATH)))
+            self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
+        else:
+            fallback = QLabel("Chargement de KIT Replay et TOP...")
+            fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            fallback.setStyleSheet("background-color: #101218; color: #F2F2F2; font-size: 18px;")
+            layout.addWidget(fallback, 1)
+            QTimer.singleShot(900, self._finish_boot)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        if self.media_player is not None and not self._playback_started:
+            self._playback_started = True
+            QTimer.singleShot(0, self.media_player.play)
+
+    def _on_media_status_changed(self, status):
+        if status in {
+            QMediaPlayer.MediaStatus.EndOfMedia,
+            QMediaPlayer.MediaStatus.InvalidMedia,
+            QMediaPlayer.MediaStatus.NoMedia,
+        }:
+            self._finish_boot()
+
+    def _finish_boot(self):
+        if self._boot_finished:
+            return
+        self._boot_finished = True
+        if self.media_player is not None:
+            self.media_player.stop()
+        self.hide()
+        self.close()
+        self.bootFinished.emit()
+
+
+class TopArPanel(QWidget):
+    def __init__(self, owner, workspace, preset_id: str):
+        super().__init__()
+        self.owner = owner
+        self.workspace = workspace
+        self.preset_id = preset_id
+
+        main = QVBoxLayout(self)
+
+        toolbar = QHBoxLayout()
+        self.btn_import = QPushButton("Importer")
+        self.btn_export = QPushButton("Exporter")
+        self.btn_fit = QPushButton("Centrer la vue")
+        self.info = QLabel(f"{PRESETS[preset_id]['label']} pret")
+        self.info.setStyleSheet("color: #AAAAAA;")
+        toolbar.addWidget(self.btn_import)
+        toolbar.addWidget(self.btn_export)
+        toolbar.addWidget(self.btn_fit)
+        toolbar.addStretch(1)
+        toolbar.addWidget(self.info)
+        main.addLayout(toolbar)
+
+        content = QHBoxLayout()
+        main.addLayout(content, 1)
+
+        controls = QWidget()
+        controls.setFixedWidth(430)
+        controls_form = QFormLayout(controls)
+        content.addWidget(controls, 0)
+
+        self.offset_x_slider, self.offset_x_spin, row = self._build_value_row(-5000, 5000, 0, 10, "offset_x")
+        controls_form.addRow("Offset X", row)
+        self.offset_y_slider, self.offset_y_spin, row = self._build_value_row(-5000, 5000, 0, 10, "offset_y")
+        controls_form.addRow("Offset Y", row)
+        self.zoom_slider, self.zoom_spin, row = self._build_value_row(10, 400, 100, 5, "zoom")
+        controls_form.addRow("Zoom %", row)
+        self.stretch_x_slider, self.stretch_x_spin, row = self._build_value_row(10, 400, 100, 5, "stretch_x")
+        controls_form.addRow("Stretch X %", row)
+        self.stretch_y_slider, self.stretch_y_spin, row = self._build_value_row(10, 400, 100, 5, "stretch_y")
+        controls_form.addRow("Stretch Y %", row)
+        self.reset_btn = QPushButton("Reinitialiser")
+        self.reset_btn.clicked.connect(self._reset_current)
+        controls_form.addRow(self.reset_btn)
+
+        self.scene = QGraphicsScene(0, 0, TOP_CANVAS_SIZE[0], TOP_CANVAS_SIZE[1])
+        self.view = CanvasView(self.scene)
+        self.view.setRenderHints(
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
+        )
+        self.view.wheelScaled.connect(self._on_view_wheel_scaled)
+        content.addWidget(self.view, 1)
+
+        clip = QRectF(TOP_VIGNETTE_X, TOP_VIGNETTE_Y, TOP_VIGNETTE_W, TOP_VIGNETTE_H)
+        path = QPainterPath()
+        path.addRoundedRect(clip, TOP_VIGNETTE_RADIUS, TOP_VIGNETTE_RADIUS)
+
+        self.overlay_hole = QGraphicsPathItem(path)
+        self.overlay_hole.setBrush(QBrush(QColor(255, 60, 180, 60)))
+        self.overlay_hole.setPen(QPen(QColor(255, 60, 180), 2))
+        self.overlay_hole.setZValue(5)
+        self.scene.addItem(self.overlay_hole)
+
+        self.mask_item = QGraphicsPathItem(path)
+        self.mask_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape)
+        self.mask_item.setZValue(10)
+        self.scene.addItem(self.mask_item)
+
+        self.import_item = QGraphicsPixmapItem(self.mask_item)
+        self.import_item.setZValue(11)
+
+        self.template_item = QGraphicsPixmapItem()
+        self.template_item.setZValue(100)
+        self.scene.addItem(self.template_item)
+
+        self.info_bar = QLabel("Aucun import")
+        self.info_bar.setStyleSheet("color: #9A9A9A; font-size: 12px;")
+        main.addWidget(self.info_bar)
+
+        self.btn_import.clicked.connect(self._import_current)
+        self.btn_export.clicked.connect(self._export_current)
+        self.btn_fit.clicked.connect(self.fit_view)
+
+        self.load_template()
+        self.refresh_from_owner()
+        QTimer.singleShot(0, self.fit_view)
+
+    def _build_value_row(self, min_value: int, max_value: int, value: int, step: int, key: str):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(min_value, max_value)
+        slider.setValue(value)
+
+        spin = QSpinBox()
+        spin.setRange(min_value, max_value)
+        spin.setValue(value)
+        spin.setSingleStep(step)
+        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+
+        slider.valueChanged.connect(spin.setValue)
+        spin.valueChanged.connect(slider.setValue)
+        slider.sliderPressed.connect(self.owner._push_undo_state)
+        slider.valueChanged.connect(lambda current_value, field=key: self._on_value_changed(field, current_value))
+        spin.valueChanged.connect(lambda current_value, field=key: self._on_value_changed(field, current_value))
+
+        row_layout.addWidget(slider, 1)
+        row_layout.addWidget(spin)
+        return slider, spin, row_widget
+
+    def _format_size(self, size: int) -> str:
+        current = float(size)
+        for unit in ("o", "Ko", "Mo", "Go"):
+            if current < 1024:
+                return f"{current:.1f} {unit}"
+            current /= 1024.0
+        return f"{current:.1f} To"
+
+    def _on_view_wheel_scaled(self, delta: float):
+        factor = 1.15 if delta > 0 else (1.0 / 1.15)
+        self.view.scale(factor, factor)
+
+    def _on_value_changed(self, key: str, value: int):
+        self.owner._apply_top_setting_change(key, value, preset_id=self.preset_id)
+        self.workspace.refresh_after_owner_change()
+
+    def _import_current(self):
+        self.owner._select_top_import_image(self.preset_id)
+
+    def _export_current(self):
+        if self.owner.top_sync_all:
+            self.owner._export_all_tops_dialog()
+            return
+        self.owner._export_single_top_dialog(self.preset_id)
+
+    def _reset_current(self):
+        self.owner._reset_top_config(self.preset_id)
+        self.workspace.refresh_after_owner_change()
+
+    def load_template(self):
+        template_path = self.owner._top_template_path(self.preset_id)
+        if template_path is None or not template_path.exists():
+            self.template_item.setPixmap(QPixmap())
+            return
+        template_pixmap = QPixmap(str(template_path))
+        if template_pixmap.isNull():
+            self.template_item.setPixmap(QPixmap())
+            return
+        self.template_item.setPixmap(
+            template_pixmap.scaled(
+                TOP_CANVAS_SIZE[0],
+                TOP_CANVAS_SIZE[1],
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def fit_view(self):
+        self.view.fitInView(
+            QRectF(0, 0, TOP_CANVAS_SIZE[0], TOP_CANVAS_SIZE[1]),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
+
+    def export_to_jpeg(self, out_path: Path) -> bool:
+        image = QImage(TOP_CANVAS_SIZE[0], TOP_CANVAS_SIZE[1], QImage.Format.Format_RGB32)
+        image.fill(QColor(8, 20, 56).rgb())
+        painter = QPainter(image)
+        self.overlay_hole.setVisible(False)
+        self.scene.render(painter)
+        painter.end()
+        self.overlay_hole.setVisible(True)
+        ok = image.save(str(out_path), "JPEG", 95)
+        self.info.setText("Export OK" if ok else "Export echoue")
+        return ok
+
+    def refresh_controls(self):
+        config = self.owner._top_config(self.preset_id)
+        controls = [
+            (self.offset_x_slider, self.offset_x_spin, int(config["offset_x"])),
+            (self.offset_y_slider, self.offset_y_spin, int(config["offset_y"])),
+            (self.zoom_slider, self.zoom_spin, int(config["zoom"])),
+            (self.stretch_x_slider, self.stretch_x_spin, int(config["stretch_x"])),
+            (self.stretch_y_slider, self.stretch_y_spin, int(config["stretch_y"])),
+        ]
+        for slider, spin, value in controls:
+            slider.blockSignals(True)
+            spin.blockSignals(True)
+            slider.setValue(value)
+            spin.setValue(value)
+            slider.blockSignals(False)
+            spin.blockSignals(False)
+
+    def refresh_preview(self):
+        self.load_template()
+        top_asset = self.owner._top_asset(self.preset_id)
+        config = self.owner._top_config(self.preset_id)
+        if top_asset.pixmap is None or top_asset.pixmap.isNull():
+            self.import_item.setPixmap(QPixmap())
+            self.import_item.setVisible(False)
+            self.info.setText(f"{PRESETS[self.preset_id]['label']} pret")
+            self.info_bar.setText("Aucun import")
+            return
+
+        cover_pixmap = top_asset.pixmap.scaled(
+            TOP_VIGNETTE_W,
+            TOP_VIGNETTE_H,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.import_item.setPixmap(cover_pixmap)
+        self.import_item.setVisible(True)
+        zoom = max(0.1, float(config["zoom"]) / 100.0)
+        stretch_x = max(0.1, float(config["stretch_x"]) / 100.0)
+        stretch_y = max(0.1, float(config["stretch_y"]) / 100.0)
+        self.import_item.setTransform(QTransform().scale(zoom * stretch_x, zoom * stretch_y))
+        self.import_item.setPos(
+            TOP_VIGNETTE_X + int(config["offset_x"]),
+            TOP_VIGNETTE_Y + int(config["offset_y"]),
+        )
+
+        self.info.setText(f"{PRESETS[self.preset_id]['label']} pret")
+        file_path = top_asset.path
+        try:
+            file_size = os.path.getsize(file_path) if file_path else None
+        except OSError:
+            file_size = None
+        if file_path and file_size is not None:
+            self.info_bar.setText(
+                f"Import : {Path(file_path).name} ({self._format_size(file_size)})"
+            )
+        elif file_path:
+            self.info_bar.setText(f"Import : {Path(file_path).name}")
+        else:
+            self.info_bar.setText("Aucun import")
+
+    def refresh_from_owner(self):
+        self.refresh_controls()
+        self.refresh_preview()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+
+class TopArWorkspace(QWidget):
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner
+        self.panels: dict[str, TopArPanel] = {}
+
+        root_layout = QVBoxLayout(self)
+        toolbar_row = QHBoxLayout()
+        self.sync_check = QCheckBox("Appliquer a tous les TOP (import + export)")
+        self.sync_check.setChecked(owner.top_sync_all)
+        self.sync_check.toggled.connect(self._on_sync_toggled)
+        toolbar_row.addWidget(self.sync_check)
+        toolbar_row.addStretch(1)
+        root_layout.addLayout(toolbar_row)
+
+        self.tabs = QTabWidget()
+        for preset_id in TOP_PRESET_IDS:
+            panel = TopArPanel(owner, self, preset_id)
+            self.panels[preset_id] = panel
+            self.tabs.addTab(panel, PRESETS[preset_id]["label"])
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        root_layout.addWidget(self.tabs, 1)
+
+    def current_preset_id(self):
+        index = self.tabs.currentIndex()
+        if index < 0:
+            return TOP_PRESET_IDS[0]
+        return TOP_PRESET_IDS[index]
+
+    def _on_sync_toggled(self, checked: bool):
+        self.owner._set_top_sync_all(checked, self.current_preset_id())
+        self.refresh_after_owner_change()
+
+    def _on_tab_changed(self, _index: int):
+        self.refresh_current_panel()
+        panel = self.panels.get(self.current_preset_id())
+        if panel is not None:
+            QTimer.singleShot(0, panel.fit_view)
+
+    def refresh_from_owner(self):
+        self.sync_check.blockSignals(True)
+        self.sync_check.setChecked(self.owner.top_sync_all)
+        self.sync_check.blockSignals(False)
+        for panel in self.panels.values():
+            panel.refresh_controls()
+
+    def refresh_current_panel(self):
+        preset_id = self.current_preset_id()
+        panel = self.panels.get(preset_id)
+        if panel is not None:
+            panel.refresh_from_owner()
+
+    def refresh_after_owner_change(self):
+        self.refresh_from_owner()
+        for panel in self.panels.values():
+            panel.refresh_preview()
+
 class ARPlusWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1161,8 +1604,8 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_pending = ""
         self.logo_text_size = 300
         self.logo_text_align = "center"
-        self.logo_text_force_upper = True
-        self.logo_text_line_spacing = 100
+        self.logo_text_force_upper = False
+        self.logo_text_line_spacing = 0
         self.logo_text_color = "#FFFFFF"
         self.logo_text_font_name = ""
         self.logo_text_font_page_url = ""
@@ -1170,7 +1613,7 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_font_file = ""
         self.logo_text_input_delay_ms = 220
         self.poster_textbox_enabled = True
-        self.poster_textbox_text = "TEXTE BOX"
+        self.poster_textbox_text = ""
         self.logo_shadow_enabled = False
         self.logo_shadow_distance = 5
         self.logo_shadow_blur = 5
@@ -1182,6 +1625,12 @@ class ARPlusWindow(QMainWindow):
         }
         self.top_settings = {
             preset_id: dict(TOP_DEFAULT_CONFIG) for preset_id in TOP_PRESET_IDS
+        }
+        self.top_assets: Dict[str, LayerAsset] = {
+            preset_id: LayerAsset() for preset_id in TOP_PRESET_IDS
+        }
+        self.preset_visual_assets: Dict[str, LayerAsset] = {
+            preset_id: LayerAsset() for preset_id in PRESET_VISUAL_PRESET_IDS
         }
         self.top_sync_all = False
         self.guides_visible = True
@@ -1257,6 +1706,7 @@ class ARPlusWindow(QMainWindow):
         self.view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         self.view.setBackgroundBrush(QColor("#F3F1F3"))
         self.view.wheelScaled.connect(self._on_wheel_scaled)
+        self.view.resized.connect(self._update_floating_preview_controls)
 
         self.clip_item = QGraphicsRectItem()
         self.clip_item.setPen(QPen(Qt.PenStyle.NoPen))
@@ -1266,6 +1716,15 @@ class ARPlusWindow(QMainWindow):
         self.scene.addItem(self.clip_item)
 
         self.items: Dict[str, LayerGraphicsItem] = {}
+        layer_z_values = {
+            "background": 100,
+            "character": 200,
+            "character2": 210,
+            "character3": 220,
+            "character4": 230,
+            "gradient": 300,
+            "logo": 400,
+        }
         for layer in RENDER_LAYER_ORDER:
             item = LayerGraphicsItem(layer)
             if layer == "gradient":
@@ -1274,7 +1733,16 @@ class ARPlusWindow(QMainWindow):
             item.clicked.connect(self._on_layer_clicked)
             item.pressed.connect(self._on_layer_pressed)
             item.setParentItem(self.clip_item)
+            item.setZValue(layer_z_values.get(layer, 0))
             self.items[layer] = item
+
+        self.preset_visual_item = LayerGraphicsItem(PRESET_VISUAL_LAYER_ID)
+        self.preset_visual_item.setParentItem(self.clip_item)
+        self.preset_visual_item.moved.connect(self._on_layer_moved)
+        self.preset_visual_item.clicked.connect(self._on_layer_clicked)
+        self.preset_visual_item.pressed.connect(self._on_layer_pressed)
+        self.preset_visual_item.setZValue(250)
+        self.preset_visual_item.setVisible(False)
 
         self.guide_item = QGraphicsPixmapItem()
         self.guide_item.setParentItem(self.clip_item)
@@ -1309,6 +1777,7 @@ class ARPlusWindow(QMainWindow):
         self.undo_shortcut.activated.connect(self._on_undo_shortcut)
 
         self._build_ui()
+        self._build_floating_preview_controls()
         self._load_guides()
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
@@ -1318,7 +1787,14 @@ class ARPlusWindow(QMainWindow):
             "visible": True,
             "opacity": 1.0,
             "fit_mode": "contain",
-            "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "anchor": "center"},
+            "transform": {
+                "x": 0.0,
+                "y": 0.0,
+                "scale": 1.0,
+                "rotation": 0.0,
+                "anchor": "center",
+                "flip_x": False,
+            },
         }
 
     def _default_gradient_config(self):
@@ -1353,10 +1829,79 @@ class ARPlusWindow(QMainWindow):
             self.top_settings[preset_id] = config
         return config
 
+    def _top_asset(self, preset_id: str | None = None):
+        if preset_id is None:
+            preset_id = self.current_preset
+        asset = self.top_assets.get(preset_id)
+        if not isinstance(asset, LayerAsset):
+            asset = LayerAsset()
+            self.top_assets[preset_id] = asset
+        return asset
+
     def _is_top_preset(self, preset_id: str | None = None) -> bool:
         if preset_id is None:
             preset_id = self.current_preset
         return preset_id in TOP_PRESET_IDS
+
+    def _clone_layer_asset(self, asset: LayerAsset | None):
+        if asset is None:
+            return LayerAsset()
+        pixmap = None
+        if asset.pixmap is not None and not asset.pixmap.isNull():
+            pixmap = QPixmap(asset.pixmap)
+        pil_img = asset.pil.copy() if asset.pil is not None else None
+        return LayerAsset(path=asset.path, pixmap=pixmap, pil=pil_img)
+
+    def _top_import_target_preset_ids(self, source_preset_id: str):
+        if source_preset_id not in TOP_PRESET_IDS:
+            return []
+        if self.top_sync_all:
+            return list(TOP_PRESET_IDS)
+        return [source_preset_id]
+
+    def _top_export_basename(self, preset_id: str, fallback_title: str = "export") -> str:
+        top_number = PRESETS.get(preset_id, {}).get("top_number", 1)
+        top_asset = self._top_asset(preset_id)
+        raw_name = Path(top_asset.path).stem if top_asset.path else fallback_title
+        if raw_name.startswith(TOP_IMPORT_PREFIX):
+            raw_name = raw_name[len(TOP_IMPORT_PREFIX) :]
+        safe_title = self._slugify_export_part(raw_name, self._slugify_export_part(fallback_title, "export"))
+        date_suffix = datetime.now().strftime("%Y-%m-%d")
+        return f"TOP-{top_number}-{safe_title}-{date_suffix}"
+
+    def _set_top_import_path(self, preset_id: str, file_path: str | Path, push_undo: bool = True):
+        if preset_id not in TOP_PRESET_IDS:
+            return False
+        asset = self._load_asset_from_path(Path(file_path))
+        if asset is None:
+            return False
+        target_ids = self._top_import_target_preset_ids(preset_id)
+        if not target_ids:
+            return False
+        if push_undo:
+            self._push_undo_state()
+        asset_dir = Path(asset.path).expanduser().parent
+        self._remember_recent_dir("import", asset_dir)
+        for target_id in target_ids:
+            self.top_assets[target_id] = self._clone_layer_asset(asset)
+        if "top_1" in target_ids:
+            self._invalidate_presets_preview(["top_1"])
+            if self.current_preset == "top_1":
+                self._refresh_preview()
+        if hasattr(self, "top_workspace"):
+            self.top_workspace.refresh_after_owner_change()
+        return True
+
+    def _select_top_import_image(self, preset_id: str):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Importer {PRESETS[preset_id]['label']}",
+            str(self._recent_dir("import")),
+            "Images (*.png *.jpg *.jpeg *.webp)",
+        )
+        if not file_path:
+            return
+        self._set_top_import_path(preset_id, file_path)
 
     def _asset_candidates(self, *relative_paths: str) -> list[Path]:
         return [ASSET_DIR / relative_path for relative_path in relative_paths if relative_path]
@@ -1392,10 +1937,15 @@ class ARPlusWindow(QMainWindow):
         for preset_id, meta in PRESETS.items():
             width, height = meta["size"]
             state[preset_id] = {layer: self._build_default_layer() for layer in LAYER_ORDER}
+            state[preset_id][PRESET_VISUAL_LAYER_ID] = self._build_default_layer()
             state[preset_id]["background"]["fit_mode"] = "crop"
             for layer_id in CHARACTER_LAYERS:
                 state[preset_id][layer_id]["fit_mode"] = "contain"
                 state[preset_id][layer_id]["transform"]["anchor"] = "bottom"
+            state[preset_id][PRESET_VISUAL_LAYER_ID]["fit_mode"] = "crop"
+            state[preset_id][PRESET_VISUAL_LAYER_ID]["transform"]["x"] = width * 0.5
+            state[preset_id][PRESET_VISUAL_LAYER_ID]["transform"]["y"] = height * 0.5
+            state[preset_id][PRESET_VISUAL_LAYER_ID]["transform"]["scale"] = 1.0
             state[preset_id]["gradient"]["fit_mode"] = "stretch"
             state[preset_id]["gradient"]["transform"]["x"] = width * 0.5
             state[preset_id]["gradient"]["transform"]["y"] = height * 0.5
@@ -2586,12 +3136,19 @@ class ARPlusWindow(QMainWindow):
     def _snapshot_asset_paths(self):
         return {layer_id: asset.path for layer_id, asset in self.assets.items()}
 
+    def _snapshot_preset_visual_paths(self):
+        return {
+            preset_id: self._preset_visual_asset(preset_id).path
+            for preset_id in PRESET_VISUAL_PRESET_IDS
+        }
+
     def _capture_undo_snapshot(self):
         return {
             "current_preset": self.current_preset,
             "active_layer": self.active_layer,
             "state": copy.deepcopy(self.state),
             "assets": self._snapshot_asset_paths(),
+            "preset_visuals": self._snapshot_preset_visual_paths(),
             "selected_exports": list(self._selected_exports()) if hasattr(self, "export_checks") else [],
             "export_dir": self.export_dir.text() if hasattr(self, "export_dir") else "",
             "guides": {
@@ -2603,6 +3160,10 @@ class ARPlusWindow(QMainWindow):
             "top": {
                 "sync_all": self.top_sync_all,
                 "settings": copy.deepcopy(self.top_settings),
+                "imports": {
+                    preset_id: self._top_asset(preset_id).path
+                    for preset_id in TOP_PRESET_IDS
+                },
             },
             "logo_text": {
                 "enabled": self.logo_text_enabled,
@@ -2611,6 +3172,7 @@ class ARPlusWindow(QMainWindow):
                 "align": self.logo_text_align,
                 "force_upper": self.logo_text_force_upper,
                 "line_spacing": self.logo_text_line_spacing,
+                "line_spacing_mode": "offset",
                 "color": self.logo_text_color,
                 "font_name": self.logo_text_font_name,
                 "font_page_url": self.logo_text_font_page_url,
@@ -2618,7 +3180,7 @@ class ARPlusWindow(QMainWindow):
                 "font_file": self.logo_text_font_file,
             },
             "poster_textbox": {
-                "enabled": self.poster_textbox_enabled,
+                "enabled": bool(self.poster_textbox_text.strip()),
                 "text": self.poster_textbox_text,
             },
             "logo_shadow": {
@@ -2630,7 +3192,7 @@ class ARPlusWindow(QMainWindow):
                 "color": self.logo_shadow_color,
             },
             "metadata_id": self.metadata_id_input.text() if hasattr(self, "metadata_id_input") else "",
-            "base_name": self.base_name_input.text() if hasattr(self, "base_name_input") else "Name",
+            "base_name": self.base_name_input.text() if hasattr(self, "base_name_input") else "Projet",
         }
 
     def _push_undo_state(self):
@@ -2683,6 +3245,30 @@ class ARPlusWindow(QMainWindow):
             restored_assets[layer_id] = loaded_asset if loaded_asset is not None else LayerAsset(path=target_path)
         self.assets = restored_assets
 
+    def _restore_preset_visuals_from_snapshot(self, visual_paths):
+        restored_visuals: Dict[str, LayerAsset] = {
+            preset_id: LayerAsset() for preset_id in PRESET_VISUAL_PRESET_IDS
+        }
+        if isinstance(visual_paths, dict):
+            for preset_id in PRESET_VISUAL_PRESET_IDS:
+                raw_path = visual_paths.get(preset_id, "")
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    continue
+                target_path = str(Path(raw_path).expanduser())
+                current_asset = self.preset_visual_assets.get(preset_id)
+                if (
+                    current_asset is not None
+                    and current_asset.path == target_path
+                    and current_asset.pixmap is not None
+                    and not current_asset.pixmap.isNull()
+                    and current_asset.pil is not None
+                ):
+                    restored_visuals[preset_id] = current_asset
+                    continue
+                loaded_asset = self._load_asset_from_path(Path(target_path))
+                restored_visuals[preset_id] = loaded_asset if loaded_asset is not None else LayerAsset(path=target_path)
+        self.preset_visual_assets = restored_visuals
+
     def _restore_undo_snapshot(self, snapshot):
         if not isinstance(snapshot, dict):
             return
@@ -2717,6 +3303,17 @@ class ARPlusWindow(QMainWindow):
                         if isinstance(raw_config, dict):
                             merged_top_settings[preset_id].update(raw_config)
                     self.top_settings = merged_top_settings
+                merged_top_assets = {preset_id: LayerAsset() for preset_id in TOP_PRESET_IDS}
+                top_imports_payload = top_payload.get("imports")
+                if isinstance(top_imports_payload, dict):
+                    for preset_id in TOP_PRESET_IDS:
+                        raw_path = top_imports_payload.get(preset_id)
+                        if not raw_path:
+                            continue
+                        loaded_asset = self._load_asset_from_path(Path(str(raw_path)))
+                        if loaded_asset is not None:
+                            merged_top_assets[preset_id] = loaded_asset
+                self.top_assets = merged_top_assets
 
             logo_text_payload = snapshot.get("logo_text", {})
             if isinstance(logo_text_payload, dict):
@@ -2727,8 +3324,9 @@ class ARPlusWindow(QMainWindow):
                 self.logo_text_force_upper = bool(
                     logo_text_payload.get("force_upper", self.logo_text_force_upper)
                 )
-                self.logo_text_line_spacing = int(
-                    logo_text_payload.get("line_spacing", self.logo_text_line_spacing)
+                self.logo_text_line_spacing = self._normalize_logo_line_spacing_value(
+                    logo_text_payload.get("line_spacing", self.logo_text_line_spacing),
+                    str(logo_text_payload.get("line_spacing_mode", "legacy")),
                 )
                 self.logo_text_color = str(logo_text_payload.get("color", self.logo_text_color))
                 self.logo_text_font_name = str(
@@ -2746,12 +3344,10 @@ class ARPlusWindow(QMainWindow):
 
             poster_textbox_payload = snapshot.get("poster_textbox", {})
             if isinstance(poster_textbox_payload, dict):
-                self.poster_textbox_enabled = bool(
-                    poster_textbox_payload.get("enabled", self.poster_textbox_enabled)
-                )
                 self.poster_textbox_text = str(
                     poster_textbox_payload.get("text", self.poster_textbox_text)
                 )
+                self.poster_textbox_enabled = bool(self.poster_textbox_text.strip())
 
             logo_shadow_payload = snapshot.get("logo_shadow", {})
             if isinstance(logo_shadow_payload, dict):
@@ -2773,11 +3369,12 @@ class ARPlusWindow(QMainWindow):
                 )
 
             self._restore_assets_from_snapshot(snapshot.get("assets", {}))
+            self._restore_preset_visuals_from_snapshot(snapshot.get("preset_visuals", {}))
 
             if hasattr(self, "metadata_id_input"):
                 self.metadata_id_input.setText(str(snapshot.get("metadata_id", "")))
             if hasattr(self, "base_name_input"):
-                self.base_name_input.setText(str(snapshot.get("base_name", "Name")))
+                self.base_name_input.setText(self._display_base_name_value(snapshot.get("base_name", "")))
             if hasattr(self, "export_dir"):
                 self.export_dir.setText(str(snapshot.get("export_dir", self.export_dir.text())))
 
@@ -2788,6 +3385,8 @@ class ARPlusWindow(QMainWindow):
                 self.current_preset = current_preset
             else:
                 self.current_preset = "poster"
+            if self.current_preset in TOP_PRESET_IDS and self.current_preset not in ARPLUS_VISIBLE_PRESET_IDS:
+                self.current_preset = "top_1"
 
             active_layer = snapshot.get("active_layer")
             if active_layer in CONTROL_LAYER_ORDER:
@@ -2848,6 +3447,11 @@ class ARPlusWindow(QMainWindow):
         root = QWidget(self)
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+        self.main_tabs = QTabWidget()
+        layout.addWidget(self.main_tabs, 1)
+
+        arplus_tab = QWidget()
+        arplus_layout = QVBoxLayout(arplus_tab)
         top_layout = QHBoxLayout()
 
         self.left_panel = self._build_left_panel()
@@ -2865,7 +3469,8 @@ class ARPlusWindow(QMainWindow):
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("Gabarit en apercu:"))
         self.preset_combo = QComboBox()
-        for preset_id, meta in PRESETS.items():
+        for preset_id in ARPLUS_VISIBLE_PRESET_IDS:
+            meta = PRESETS[preset_id]
             self.preset_combo.addItem(f"{meta['label']} ({meta['size'][0]}x{meta['size'][1]})", preset_id)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         top_row.addWidget(self.preset_combo)
@@ -2883,10 +3488,53 @@ class ARPlusWindow(QMainWindow):
         self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         top_layout.addWidget(self.right_scroll, 1)
 
-        layout.addLayout(top_layout, 1)
-        layout.addWidget(self._build_presets_preview_strip())
+        arplus_layout.addLayout(top_layout, 1)
+        arplus_layout.addWidget(self._build_presets_preview_strip())
+        self.main_tabs.addTab(arplus_tab, "KIT Replay")
+        self.top_workspace = TopArWorkspace(self)
+        self.main_tabs.addTab(self.top_workspace, "TOP")
+        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
         self._apply_responsive_side_widths()
         self._request_presets_preview_refresh(force=True)
+
+    def _build_floating_preview_controls(self):
+        self.preset_visual_import_btn = QPushButton(self.view.viewport())
+        self.preset_visual_import_btn.clicked.connect(self._import_current_preset_visual)
+        self.preset_visual_import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.preset_visual_import_btn.setMinimumHeight(34)
+        self.preset_visual_import_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: rgba(11, 95, 166, 230);
+                color: white;
+                border: 1px solid #084A82;
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: rgba(19, 116, 199, 235);
+            }
+            QPushButton:pressed {
+                background-color: rgba(8, 74, 130, 240);
+            }
+            """
+        )
+        self.preset_visual_import_btn.hide()
+        self._update_floating_preview_controls()
+
+    def _on_main_tab_changed(self, index: int):
+        if not hasattr(self, "main_tabs") or not hasattr(self, "top_workspace"):
+            return
+        if self.main_tabs.widget(index) is self.top_workspace:
+            self.top_workspace.refresh_after_owner_change()
+        self._update_floating_preview_controls()
+
+    def warmup_workspace_cache(self):
+        self._refresh_preview()
+        self._request_presets_preview_refresh(force=True)
+        if hasattr(self, "top_workspace"):
+            self.top_workspace.refresh_after_owner_change()
 
     def _apply_responsive_side_widths(self):
         if not hasattr(self, "left_scroll") or not hasattr(self, "right_scroll"):
@@ -2909,6 +3557,7 @@ class ARPlusWindow(QMainWindow):
         compact = panel_width > 0 and panel_width < 380
 
         layer_labels_normal = {
+            PRESET_VISUAL_LAYER_ID: "Visuel",
             "character": "Perso",
             "character2": "2",
             "character3": "3",
@@ -2917,6 +3566,7 @@ class ARPlusWindow(QMainWindow):
             "logo": "Logo",
         }
         layer_labels_compact = {
+            PRESET_VISUAL_LAYER_ID: "Visuel",
             "character": "Perso",
             "character2": "2",
             "character3": "3",
@@ -2927,6 +3577,55 @@ class ARPlusWindow(QMainWindow):
         target = layer_labels_compact if compact else layer_labels_normal
         for layer_id, btn in self.layer_buttons.items():
             btn.setText(target.get(layer_id, btn.text()))
+
+    def _supports_preset_visual(self, preset_id: str | None = None) -> bool:
+        if preset_id is None:
+            preset_id = self.current_preset
+        return preset_id in PRESET_VISUAL_PRESET_IDS
+
+    def _preset_visual_asset(self, preset_id: str | None = None) -> LayerAsset:
+        if preset_id is None:
+            preset_id = self.current_preset
+        asset = self.preset_visual_assets.get(preset_id)
+        if not isinstance(asset, LayerAsset):
+            asset = LayerAsset()
+            self.preset_visual_assets[preset_id] = asset
+        return asset
+
+    def _preset_visual_button_text(self, preset_id: str | None = None) -> str:
+        if preset_id is None:
+            preset_id = self.current_preset
+        label = PRESETS.get(preset_id, {}).get("label", "visuel")
+        asset = self._preset_visual_asset(preset_id)
+        prefix = "Remplacer" if asset.path else "Importer"
+        return f"{prefix} visuel {label}"
+
+    def _update_floating_preview_controls(self):
+        if not hasattr(self, "preset_visual_import_btn") or not hasattr(self, "view"):
+            return
+        should_show = (
+            self._supports_preset_visual(self.current_preset)
+            and hasattr(self, "main_tabs")
+            and self.main_tabs.currentIndex() == 0
+        )
+        self.preset_visual_import_btn.setVisible(should_show)
+        if not should_show:
+            return
+        self.preset_visual_import_btn.setText(self._preset_visual_button_text(self.current_preset))
+        self.preset_visual_import_btn.adjustSize()
+        viewport = self.view.viewport()
+        margin = 12
+        button_width = self.preset_visual_import_btn.width()
+        self.preset_visual_import_btn.move(
+            max(margin, viewport.width() - button_width - margin),
+            margin,
+        )
+        self.preset_visual_import_btn.raise_()
+
+    def _import_current_preset_visual(self):
+        if not self._supports_preset_visual(self.current_preset):
+            return
+        self._import_preset_visual(self.current_preset)
 
     def _build_left_panel(self):
         panel = QWidget()
@@ -2991,12 +3690,14 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_upper_check = QCheckBox("Majuscule")
         self.logo_text_upper_check.setChecked(self.logo_text_force_upper)
         self.logo_text_upper_check.toggled.connect(self._on_logo_text_upper_toggled)
-        self.logo_text_line_spacing_spin = QSpinBox()
-        self.logo_text_line_spacing_spin.setRange(50, 300)
-        self.logo_text_line_spacing_spin.setSingleStep(5)
-        self.logo_text_line_spacing_spin.setSuffix(" %")
-        self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
-        self.logo_text_line_spacing_spin.valueChanged.connect(self._on_logo_text_line_spacing_changed)
+        self.logo_text_line_spacing_combo = QComboBox()
+        for value in range(-200, 201, 20):
+            label = f"{value:+d} %" if value else "0 %"
+            self.logo_text_line_spacing_combo.addItem(label, value)
+        spacing_idx = self.logo_text_line_spacing_combo.findData(self.logo_text_line_spacing)
+        if spacing_idx >= 0:
+            self.logo_text_line_spacing_combo.setCurrentIndex(spacing_idx)
+        self.logo_text_line_spacing_combo.currentIndexChanged.connect(self._on_logo_text_line_spacing_changed)
         self.logo_text_color_btn = QPushButton("Couleur texte")
         self.logo_text_color_btn.clicked.connect(self._pick_logo_color)
         self.poster_textbox_check = QCheckBox("TextBox poster")
@@ -3118,7 +3819,7 @@ class ARPlusWindow(QMainWindow):
         text_form.addRow("Contenu", self.logo_text_input)
         text_form.addRow("Alignement", self.logo_text_align_combo)
         text_form.addRow(self.logo_text_upper_check)
-        text_form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
+        text_form.addRow("Interligne (+/- %)", self.logo_text_line_spacing_spin)
         text_form.addRow(self.logo_text_color_btn)
         text_layout.addLayout(text_form)
         resources_layout.addWidget(text_box)
@@ -3171,6 +3872,7 @@ class ARPlusWindow(QMainWindow):
         layer_buttons_bottom_row.setSpacing(6)
         self.layer_buttons: Dict[str, QPushButton] = {}
         layer_labels = {
+            PRESET_VISUAL_LAYER_ID: "Visuel",
             "character": "Perso",
             "character2": "2",
             "character3": "3",
@@ -3271,7 +3973,8 @@ class ARPlusWindow(QMainWindow):
         self.export_dir_btn.clicked.connect(self._select_export_dir)
         self.metadata_id_input = QLineEdit()
         self.metadata_id_input.setPlaceholderText("Numero ID")
-        self.base_name_input = QLineEdit("Name")
+        self.base_name_input = QLineEdit()
+        self.base_name_input.setPlaceholderText("Projet")
         self.save_project_btn = QPushButton("Sauvegarde projet...")
         self.save_project_btn.clicked.connect(self._save_project_snapshot_as)
         self.new_project_btn = QPushButton("Nouveau projet")
@@ -3287,7 +3990,7 @@ class ARPlusWindow(QMainWindow):
         exports_layout.addWidget(self.export_dir_btn)
         exports_layout.addWidget(QLabel("ID"))
         exports_layout.addWidget(self.metadata_id_input)
-        exports_layout.addWidget(QLabel("Nom de base"))
+        exports_layout.addWidget(QLabel("Projet"))
         exports_layout.addWidget(self.base_name_input)
         exports_layout.addWidget(self.save_project_btn)
         exports_layout.addWidget(self.new_project_btn)
@@ -3410,12 +4113,14 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_upper_check = QCheckBox("Majuscule")
         self.logo_text_upper_check.setChecked(self.logo_text_force_upper)
         self.logo_text_upper_check.toggled.connect(self._on_logo_text_upper_toggled)
-        self.logo_text_line_spacing_spin = QSpinBox()
-        self.logo_text_line_spacing_spin.setRange(50, 300)
-        self.logo_text_line_spacing_spin.setSingleStep(5)
-        self.logo_text_line_spacing_spin.setSuffix(" %")
-        self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
-        self.logo_text_line_spacing_spin.valueChanged.connect(self._on_logo_text_line_spacing_changed)
+        self.logo_text_line_spacing_combo = QComboBox()
+        for value in range(-200, 201, 20):
+            label = f"{value:+d} %" if value else "0 %"
+            self.logo_text_line_spacing_combo.addItem(label, value)
+        spacing_idx = self.logo_text_line_spacing_combo.findData(self.logo_text_line_spacing)
+        if spacing_idx >= 0:
+            self.logo_text_line_spacing_combo.setCurrentIndex(spacing_idx)
+        self.logo_text_line_spacing_combo.currentIndexChanged.connect(self._on_logo_text_line_spacing_changed)
         self.logo_text_color_btn = QPushButton("Couleur texte")
         self.logo_text_color_btn.clicked.connect(self._pick_logo_color)
         self.logo_font_value_label = QLabel(self._logo_font_status_text())
@@ -3452,7 +4157,7 @@ class ARPlusWindow(QMainWindow):
         text_form.addRow("Contenu", self.logo_text_input)
         text_form.addRow("Alignement", self.logo_text_align_combo)
         text_form.addRow(self.logo_text_upper_check)
-        text_form.addRow("Interligne (%)", self.logo_text_line_spacing_spin)
+        text_form.addRow("Interligne (+/- %)", self.logo_text_line_spacing_combo)
         text_form.addRow(self.logo_text_color_btn)
         text_form.addRow("Typo", font_row)
         text_layout.addLayout(text_form)
@@ -3537,19 +4242,13 @@ class ARPlusWindow(QMainWindow):
         return top_box
 
     def _build_poster_textbox_box(self):
-        self.poster_textbox_check = QCheckBox("TextBox poster")
-        self.poster_textbox_check.setChecked(self.poster_textbox_enabled)
-        self.poster_textbox_check.toggled.connect(self._on_poster_textbox_toggled)
         self.poster_textbox_input = QLineEdit(self.poster_textbox_text)
-        self.poster_textbox_input.setPlaceholderText("Texte text box (poster)")
+        self.poster_textbox_input.setPlaceholderText("Exemple : AJOUT RECENT, NOUVEAU")
         self.poster_textbox_input.textChanged.connect(self._on_poster_textbox_changed)
 
-        textbox_box = QGroupBox("TextBox poster")
+        textbox_box = QGroupBox("Bandeau info (POSTER)")
         textbox_layout = QVBoxLayout(textbox_box)
-        textbox_form = QFormLayout()
-        textbox_form.addRow(self.poster_textbox_check)
-        textbox_form.addRow("Textebox", self.poster_textbox_input)
-        textbox_layout.addLayout(textbox_form)
+        textbox_layout.addWidget(self.poster_textbox_input)
         return textbox_box
 
     def _build_gradient_box(self):
@@ -3692,6 +4391,7 @@ class ARPlusWindow(QMainWindow):
         layer_buttons_bottom_row.setSpacing(6)
         self.layer_buttons: Dict[str, QPushButton] = {}
         layer_labels = {
+            PRESET_VISUAL_LAYER_ID: "Visuel",
             "character": "Perso",
             "character2": "2",
             "character3": "3",
@@ -3754,6 +4454,10 @@ class ARPlusWindow(QMainWindow):
         scale_layout.addWidget(self.scale_slider, 1)
         scale_layout.addWidget(self.scale_value_label)
 
+        self.flip_horizontal_btn = QPushButton("Miroir horizontal")
+        self.flip_horizontal_btn.setCheckable(True)
+        self.flip_horizontal_btn.toggled.connect(self._on_flip_horizontal_toggled)
+
         self.reset_layer_btn = QPushButton("Reinitialiser le calque")
         self.center_layer_btn = QPushButton("Centrer le calque")
         self.center_layer_btn.clicked.connect(self._on_center_layer)
@@ -3763,6 +4467,7 @@ class ARPlusWindow(QMainWindow):
         layer_layout.addRow(self.visible_check)
         layer_layout.addRow("Opacite", opacity_row)
         layer_layout.addRow("Echelle", scale_row)
+        layer_layout.addRow(self.flip_horizontal_btn)
         layer_layout.addRow(self.center_layer_btn)
         layer_layout.addRow(self.reset_layer_btn)
         self._set_active_layer(self.active_layer, sync=False)
@@ -3778,20 +4483,33 @@ class ARPlusWindow(QMainWindow):
         exports_grid.setVerticalSpacing(6)
         exports_grid.setColumnStretch(0, 1)
         exports_grid.setColumnStretch(1, 1)
+        export_actions_row = QHBoxLayout()
+        export_actions_row.setContentsMargins(0, 0, 0, 0)
+        export_actions_row.setSpacing(6)
+        self.export_all_btn = QPushButton("Tout cocher")
+        self.export_all_btn.clicked.connect(lambda: self._set_all_exports_checked(True))
+        self.export_none_btn = QPushButton("Tout decocher")
+        self.export_none_btn.clicked.connect(lambda: self._set_all_exports_checked(False))
+        export_actions_row.addWidget(self.export_all_btn)
+        export_actions_row.addWidget(self.export_none_btn)
         self.export_checks: Dict[str, QCheckBox] = {}
         for index, (export_id, meta) in enumerate(EXPORT_TARGETS.items()):
             check = QCheckBox(meta["label"])
             check.setChecked(True)
             self.export_checks[export_id] = check
             exports_grid.addWidget(check, index // 2, index % 2)
+        exports_layout.addLayout(export_actions_row)
         exports_layout.addWidget(exports_grid_widget)
 
         self.export_dir = QLineEdit(str(Path.cwd() / "exports"))
         self.export_dir_btn = QPushButton("Dossier d'export")
         self.export_dir_btn.clicked.connect(self._select_export_dir)
+        self.open_export_dir_btn = QPushButton("Ouvrir dossier export")
+        self.open_export_dir_btn.clicked.connect(self._open_export_dir)
         self.metadata_id_input = QLineEdit()
         self.metadata_id_input.setPlaceholderText("Numero ID")
-        self.base_name_input = QLineEdit("Name")
+        self.base_name_input = QLineEdit()
+        self.base_name_input.setPlaceholderText("Projet")
         self.load_project_btn = QPushButton("Importer projet...")
         self.load_project_btn.clicked.connect(self._load_project_snapshot_from_dialog)
         self.save_project_btn = QPushButton("Sauvegarde projet...")
@@ -3801,15 +4519,36 @@ class ARPlusWindow(QMainWindow):
 
         self.export_btn = QPushButton("Exporter")
         self.export_btn.clicked.connect(self._export_selected)
+        self.export_btn.setMinimumHeight(38)
+        self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0B5FA6;
+                color: white;
+                border: 1px solid #084A82;
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #1374C7;
+            }
+            QPushButton:pressed {
+                background-color: #084A82;
+            }
+            """
+        )
 
         self.progress = QProgressBar()
 
         exports_layout.addWidget(QLabel("Dossier"))
         exports_layout.addWidget(self.export_dir)
         exports_layout.addWidget(self.export_dir_btn)
+        exports_layout.addWidget(self.open_export_dir_btn)
         exports_layout.addWidget(QLabel("ID"))
         exports_layout.addWidget(self.metadata_id_input)
-        exports_layout.addWidget(QLabel("Nom de base"))
+        exports_layout.addWidget(QLabel("Nom du projet"))
         exports_layout.addWidget(self.base_name_input)
         exports_layout.addWidget(self.load_project_btn)
         exports_layout.addWidget(self.save_project_btn)
@@ -3822,7 +4561,6 @@ class ARPlusWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.addWidget(self._build_guides_manager_box())
-        layout.addWidget(self._build_top_box())
         layout.addWidget(self._build_logo_text_box())
         layout.addWidget(self._build_shadow_box())
         layout.addWidget(self._build_poster_textbox_box())
@@ -3831,7 +4569,6 @@ class ARPlusWindow(QMainWindow):
         self._sync_logo_controls()
         self._sync_gradient_controls()
         self._sync_poster_textbox_controls()
-        self._sync_top_controls()
         self._update_shadow_slider_labels()
         return panel
 
@@ -3857,7 +4594,8 @@ class ARPlusWindow(QMainWindow):
         row.setSpacing(12)
         self.preset_preview_labels: Dict[str, QLabel] = {}
 
-        for preset_id, meta in PRESETS.items():
+        for preset_id in ARPLUS_VISIBLE_PRESET_IDS:
+            meta = PRESETS[preset_id]
             card = QWidget()
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(0, 0, 0, 0)
@@ -3886,6 +4624,7 @@ class ARPlusWindow(QMainWindow):
         self.clip_item.setRect(0, 0, width, height)
         self.frame_item.setRect(0, 0, width, height)
         self._fit_view_to_scene()
+        self._update_floating_preview_controls()
 
     def _fit_view_to_scene(self):
         scene_rect = self.scene.sceneRect()
@@ -3898,11 +4637,13 @@ class ARPlusWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._fit_view_to_scene()
+        self._update_floating_preview_controls()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_responsive_side_widths()
         self._fit_view_to_scene()
+        self._update_floating_preview_controls()
 
     def closeEvent(self, event):
         try:
@@ -3916,7 +4657,32 @@ class ARPlusWindow(QMainWindow):
         return self.active_layer
 
     def _layer_state(self, preset_id: str, layer_id: str):
-        return self.state[preset_id][layer_id]
+        if preset_id == "poster_no_logo" and layer_id != PRESET_VISUAL_LAYER_ID:
+            preset_id = "poster"
+        preset_state = self.state.setdefault(preset_id, {})
+        if layer_id not in preset_state:
+            preset_state[layer_id] = self._build_default_layer()
+            width, height = PRESETS[preset_id]["size"]
+            if layer_id == "background":
+                preset_state[layer_id]["fit_mode"] = "crop"
+                preset_state[layer_id]["transform"]["x"] = width * 0.5
+                preset_state[layer_id]["transform"]["y"] = height * 0.5
+            elif layer_id in CHARACTER_LAYERS:
+                preset_state[layer_id]["fit_mode"] = "contain"
+                preset_state[layer_id]["transform"]["anchor"] = "bottom"
+            elif layer_id == PRESET_VISUAL_LAYER_ID:
+                preset_state[layer_id]["fit_mode"] = "crop"
+                preset_state[layer_id]["transform"]["x"] = width * 0.5
+                preset_state[layer_id]["transform"]["y"] = height * 0.5
+        layer_state = preset_state[layer_id]
+        transform = layer_state.setdefault("transform", {})
+        transform.setdefault("x", 0.0)
+        transform.setdefault("y", 0.0)
+        transform.setdefault("scale", 1.0)
+        transform.setdefault("rotation", 0.0)
+        transform.setdefault("anchor", "center")
+        transform.setdefault("flip_x", False)
+        return layer_state
 
     def _log(self, message: str):
         _ = message
@@ -3961,6 +4727,7 @@ class ARPlusWindow(QMainWindow):
         self._sync_gradient_controls()
         self._sync_top_controls()
         self._refresh_presets_preview_borders()
+        self._update_floating_preview_controls()
 
     def _on_preset_preview_clicked(self, preset_id: str):
         index = self.preset_combo.findData(preset_id)
@@ -3996,17 +4763,19 @@ class ARPlusWindow(QMainWindow):
         self._refresh_preview()
         self._sync_layer_controls()
 
-    def _top_target_preset_ids(self):
-        if not self._is_top_preset():
+    def _top_target_preset_ids(self, source_preset_id: str | None = None):
+        if source_preset_id is None:
+            if not self._is_top_preset():
+                return []
+            source_preset_id = self.current_preset
+        if source_preset_id not in TOP_PRESET_IDS:
             return []
-        if self.top_sync_all:
-            return list(TOP_PRESET_IDS)
-        return [self.current_preset]
+        return [source_preset_id]
 
-    def _apply_top_setting_change(self, key: str, value: int):
+    def _apply_top_setting_change(self, key: str, value: int, preset_id: str | None = None):
         if self.updating_ui:
             return
-        target_ids = self._top_target_preset_ids()
+        target_ids = self._top_target_preset_ids(preset_id)
         if not target_ids:
             return
         changed = False
@@ -4019,18 +4788,19 @@ class ARPlusWindow(QMainWindow):
         if not changed:
             return
         self._request_presets_preview_refresh(preset_ids=target_ids)
-        if self._is_top_preset():
+        if self.current_preset in target_ids and self._is_top_preset():
             self._schedule_live_preview_refresh()
 
     def _on_top_sync_all_toggled(self, checked: bool):
+        self._set_top_sync_all(checked, self.current_preset if self._is_top_preset() else None)
+
+    def _set_top_sync_all(self, checked: bool, source_preset_id: str | None = None):
+        if self.top_sync_all == checked:
+            self._sync_top_controls()
+            return
+        self._push_undo_state()
         self.top_sync_all = checked
-        if checked and self._is_top_preset():
-            self._push_undo_state()
-            source_config = copy.deepcopy(self._top_config(self.current_preset))
-            for preset_id in TOP_PRESET_IDS:
-                self.top_settings[preset_id] = copy.deepcopy(source_config)
-            self._invalidate_presets_preview(TOP_PRESET_IDS)
-            self._refresh_preview()
+        self._sync_top_controls()
 
     def _on_top_offset_x_changed(self, value: int):
         self._apply_top_setting_change("offset_x", value)
@@ -4047,16 +4817,20 @@ class ARPlusWindow(QMainWindow):
     def _on_top_stretch_y_changed(self, value: int):
         self._apply_top_setting_change("stretch_y", value)
 
-    def _reset_current_top_config(self):
-        if not self._is_top_preset():
+    def _reset_top_config(self, preset_id: str | None = None):
+        target_ids = self._top_target_preset_ids(preset_id)
+        if not target_ids:
             return
         self._push_undo_state()
-        target_ids = self._top_target_preset_ids()
         for preset_id in target_ids:
             self.top_settings[preset_id] = self._default_top_config()
         self._sync_top_controls()
         self._invalidate_presets_preview(target_ids)
-        self._refresh_preview()
+        if self.current_preset in target_ids and self._is_top_preset():
+            self._refresh_preview()
+
+    def _reset_current_top_config(self):
+        self._reset_top_config(self.current_preset if self._is_top_preset() else None)
 
     def _on_logo_text_toggle(self, checked: bool):
         self._flush_logo_text_input()
@@ -4112,10 +4886,11 @@ class ARPlusWindow(QMainWindow):
         self._refresh_preview()
         self._sync_layer_controls()
 
-    def _on_logo_text_line_spacing_changed(self, value: int):
+    def _on_logo_text_line_spacing_changed(self, _value: int):
         self._flush_logo_text_input()
         self._push_undo_state()
-        self.logo_text_line_spacing = value
+        if hasattr(self, "logo_text_line_spacing_combo"):
+            self.logo_text_line_spacing = int(self.logo_text_line_spacing_combo.currentData())
         self._reapply_logo_auto_placement()
         self._invalidate_presets_preview()
         self._refresh_preview()
@@ -4143,6 +4918,7 @@ class ARPlusWindow(QMainWindow):
             self.poster_textbox_input.setText(upper_value)
             self.poster_textbox_input.blockSignals(False)
         self.poster_textbox_text = upper_value
+        self.poster_textbox_enabled = bool(upper_value.strip())
         self._invalidate_presets_preview(["poster"])
         self._refresh_preview()
 
@@ -4237,8 +5013,19 @@ class ARPlusWindow(QMainWindow):
         lines = logo_text.splitlines()
         return lines if lines else [logo_text]
 
+    def _normalize_logo_line_spacing_value(self, value, mode: str | None = "offset") -> int:
+        try:
+            numeric_value = int(value)
+        except (TypeError, ValueError):
+            numeric_value = 0
+        if mode != "offset":
+            numeric_value = numeric_value - 100
+        numeric_value = max(-200, min(200, numeric_value))
+        snapped = int(round(numeric_value / 20.0) * 20)
+        return max(-200, min(200, snapped))
+
     def _logo_line_spacing_ratio(self) -> float:
-        return max(0.5, min(3.0, self.logo_text_line_spacing / 100))
+        return max(0.1, min(3.0, 1.0 + (self.logo_text_line_spacing / 100.0)))
 
     def _logo_preview_point_size(self) -> int:
         effective_size = self._logo_effective_size()
@@ -4601,8 +5388,10 @@ class ARPlusWindow(QMainWindow):
         return img
 
     def _poster_textbox_display_text(self):
-        text = self.poster_textbox_text.strip()
-        return (text if text else "TEXTE BOX").upper()
+        return self.poster_textbox_text.strip().upper()
+
+    def _has_poster_info_banner(self) -> bool:
+        return bool(self.poster_textbox_text.strip())
 
     def _load_poster_textbox_font(self, size: int):
         font_candidates = [
@@ -4627,7 +5416,7 @@ class ARPlusWindow(QMainWindow):
         canvas_h: int,
         size_factor: float = 1.0,
     ):
-        if preset_id != "poster" or not self.poster_textbox_enabled:
+        if preset_id not in {"poster", "poster_no_logo"}:
             return None
         text = self._poster_textbox_display_text()
         if not text:
@@ -4755,6 +5544,22 @@ class ARPlusWindow(QMainWindow):
         self._update_slider_value_labels()
         self._schedule_live_preview_refresh()
 
+    def _layer_supports_horizontal_flip(self, layer_id: str) -> bool:
+        return layer_id == "background" or layer_id in CHARACTER_LAYERS or layer_id == PRESET_VISUAL_LAYER_ID
+
+    def _on_flip_horizontal_toggled(self, checked: bool):
+        layer = self._selected_layer()
+        if not self._layer_supports_horizontal_flip(layer):
+            if hasattr(self, "flip_horizontal_btn"):
+                self.flip_horizontal_btn.blockSignals(True)
+                self.flip_horizontal_btn.setChecked(False)
+                self.flip_horizontal_btn.blockSignals(False)
+            return
+        self._push_undo_state()
+        self._layer_state(self.current_preset, layer)["transform"]["flip_x"] = bool(checked)
+        self._refresh_preview()
+        self._sync_layer_controls()
+
     def _on_reset_layer(self):
         self._push_undo_state()
         layer = self._selected_layer()
@@ -4818,13 +5623,24 @@ class ARPlusWindow(QMainWindow):
     def _is_layer_allowed(self, preset_id: str, layer_id: str) -> bool:
         if self._is_top_preset(preset_id):
             return False
+        if layer_id == PRESET_VISUAL_LAYER_ID:
+            return self._supports_preset_visual(preset_id)
         if preset_id == "logo":
             return layer_id == "logo"
         if layer_id == "logo" and PRESETS[preset_id].get("skip_logo"):
             return False
         return True
 
-    def _layer_has_loaded_asset(self, layer_id: str) -> bool:
+    def _layer_has_loaded_asset(self, layer_id: str, preset_id: str | None = None) -> bool:
+        if preset_id is None:
+            preset_id = self.current_preset
+        if layer_id == PRESET_VISUAL_LAYER_ID:
+            if not self._supports_preset_visual(preset_id):
+                return False
+            asset = self._preset_visual_asset(preset_id)
+            if asset.pixmap is not None and not asset.pixmap.isNull():
+                return True
+            return asset.pil is not None
         asset = self.assets.get(layer_id)
         if asset is None:
             return False
@@ -4880,6 +5696,8 @@ class ARPlusWindow(QMainWindow):
     def _is_control_layer_available(self, preset_id: str, layer_id: str) -> bool:
         if not self._is_layer_allowed(preset_id, layer_id):
             return False
+        if layer_id == PRESET_VISUAL_LAYER_ID and not self._layer_has_loaded_asset(layer_id, preset_id):
+            return False
         if layer_id in EXTRA_CHARACTER_LAYERS and not self._layer_has_loaded_asset(layer_id):
             return False
         return True
@@ -4887,6 +5705,12 @@ class ARPlusWindow(QMainWindow):
     def _sync_extra_character_layer_buttons(self):
         if not hasattr(self, "layer_buttons"):
             return
+        preset_visual_button = self.layer_buttons.get(PRESET_VISUAL_LAYER_ID)
+        if preset_visual_button is not None:
+            preset_visual_button.setVisible(
+                self._supports_preset_visual(self.current_preset)
+                and self._layer_has_loaded_asset(PRESET_VISUAL_LAYER_ID, self.current_preset)
+            )
         for layer_id in EXTRA_CHARACTER_LAYERS:
             button = self.layer_buttons.get(layer_id)
             if button is None:
@@ -4917,6 +5741,12 @@ class ARPlusWindow(QMainWindow):
         self.visible_check.setEnabled(has_available_layer)
         self.opacity_slider.setEnabled(has_available_layer)
         self.scale_slider.setEnabled(has_available_layer)
+        if hasattr(self, "flip_horizontal_btn"):
+            flip_allowed = has_available_layer and self._layer_supports_horizontal_flip(layer)
+            self.flip_horizontal_btn.blockSignals(True)
+            self.flip_horizontal_btn.setChecked(bool(layer_state["transform"].get("flip_x", False)))
+            self.flip_horizontal_btn.blockSignals(False)
+            self.flip_horizontal_btn.setEnabled(flip_allowed)
         if hasattr(self, "center_layer_btn"):
             self.center_layer_btn.setEnabled(has_available_layer)
         if hasattr(self, "reset_layer_btn"):
@@ -4959,8 +5789,75 @@ class ARPlusWindow(QMainWindow):
         self._refresh_preview()
         self._sync_layer_controls()
 
+    def _import_preset_visual(self, preset_id: str):
+        if not self._supports_preset_visual(preset_id):
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Importer le visuel {PRESETS[preset_id]['label']}",
+            str(self._recent_dir("import")),
+            "Images (*.png *.jpg *.jpeg *.webp)",
+        )
+        if not file_path:
+            return
+        loaded_asset = self._load_asset_from_path(Path(file_path))
+        if loaded_asset is None:
+            self._log(f"Erreur import visuel {preset_id}: fichier invalide")
+            QMessageBox.critical(self, "Erreur", "Impossible d'ouvrir l'image du visuel.")
+            return
+        self._remember_recent_dir("import", Path(file_path).parent)
+        self._push_undo_state()
+        self.preset_visual_assets[preset_id] = loaded_asset
+        self.state[preset_id][PRESET_VISUAL_LAYER_ID] = self._build_default_layer()
+        self.state[preset_id][PRESET_VISUAL_LAYER_ID]["fit_mode"] = "crop"
+        self._apply_auto_placement(PRESET_VISUAL_LAYER_ID, preset_id)
+        if preset_id == self.current_preset:
+            self._set_active_layer(PRESET_VISUAL_LAYER_ID, sync=False)
+        self._invalidate_presets_preview([preset_id])
+        self._log(f"Import visuel {preset_id}: {file_path}")
+        self._refresh_preview()
+        self._sync_layer_controls()
+        self._update_floating_preview_controls()
+
+    def _render_preset_visual_image(
+        self,
+        preset_id: str,
+        canvas_w: int,
+        canvas_h: int,
+        *,
+        resample=Image.Resampling.LANCZOS,
+        log_upscale: bool = False,
+    ):
+        if not self._supports_preset_visual(preset_id):
+            return None
+        asset = self._preset_visual_asset(preset_id)
+        source = asset.pil
+        if source is None:
+            return None
+        layer_state = self._layer_state(preset_id, PRESET_VISUAL_LAYER_ID)
+        src_w, src_h = source.size
+        if src_w <= 0 or src_h <= 0:
+            return None
+        fit_mode = layer_state.get("fit_mode", "contain")
+        ratio = min(canvas_w / src_w, canvas_h / src_h)
+        if fit_mode in {"cover", "crop"}:
+            ratio = max(canvas_w / src_w, canvas_h / src_h)
+        ratio *= max(0.01, float(layer_state["transform"].get("scale", 1.0)))
+        target_w = max(1, int(round(src_w * ratio)))
+        target_h = max(1, int(round(src_h * ratio)))
+        if log_upscale and ratio > self.upscale_warning_ratio:
+            preset_label = PRESETS.get(preset_id, {}).get("label", preset_id)
+            self._log(f"Avertissement upscale ({preset_label} / visuel): x{ratio:.2f}")
+        rendered = source if (target_w, target_h) == source.size else source.resize((target_w, target_h), resample)
+        if bool(layer_state["transform"].get("flip_x", False)):
+            rendered = rendered.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        return rendered
+
     def _apply_auto_placement(self, layer_id: str, preset_id: str):
-        layer_pixmap = self.assets[layer_id].pixmap
+        if layer_id == PRESET_VISUAL_LAYER_ID:
+            layer_pixmap = self._preset_visual_asset(preset_id).pixmap
+        else:
+            layer_pixmap = self.assets[layer_id].pixmap
         if layer_id == "logo":
             layout_logo_pixmap = self._logo_layout_source_pixmap()
             if not layout_logo_pixmap.isNull():
@@ -4996,6 +5893,13 @@ class ARPlusWindow(QMainWindow):
             layer_state["transform"]["x"] = width * 0.5
             layer_state["transform"]["y"] = height * 0.5
             layer_state["transform"]["scale"] = 1.0
+        elif layer_id == PRESET_VISUAL_LAYER_ID:
+            layer_state["fit_mode"] = "crop"
+            layer_state["transform"]["anchor"] = "center"
+            layer_state["transform"]["x"] = width * 0.5
+            layer_state["transform"]["y"] = height * 0.5
+            layer_state["transform"]["scale"] = 1.0
+            layer_state["transform"]["flip_x"] = False
         elif layer_id == "logo":
             if layer_pixmap is not None and self._apply_guide_auto_placement(layer_id, preset_id, layer_pixmap):
                 return
@@ -5029,6 +5933,7 @@ class ARPlusWindow(QMainWindow):
             self.clip_item.setVisible(False)
             self.guide_item.setVisible(False)
             self.poster_textbox_item.setVisible(False)
+            self.preset_visual_item.setVisible(False)
             preview_canvas = self._compose_preset_canvas(self.current_preset, render_scale=1.0)
             preview_pixmap = self._pil_to_qpixmap(preview_canvas) if preview_canvas is not None else QPixmap()
             if preview_pixmap.isNull():
@@ -5039,10 +5944,13 @@ class ARPlusWindow(QMainWindow):
                 self.special_preset_item.setPos(0, 0)
                 self.special_preset_item.setVisible(True)
             self._request_presets_preview_refresh(preset_ids=[self.current_preset])
+            if hasattr(self, "main_tabs") and hasattr(self, "top_workspace") and self.main_tabs.currentWidget() is self.top_workspace:
+                self.top_workspace.refresh_current_panel()
             return
 
         self.special_preset_item.setVisible(False)
         self.clip_item.setVisible(True)
+        self.preset_visual_item.setVisible(False)
 
         for layer in RENDER_LAYER_ORDER:
             item = self.items[layer]
@@ -5088,8 +5996,27 @@ class ARPlusWindow(QMainWindow):
                 pos_y = layer_state["transform"]["y"]
                 item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
                 item.setPos(pos_x, pos_y)
+        preset_visual_state = self._layer_state(self.current_preset, PRESET_VISUAL_LAYER_ID)
+        preset_visual_pixmap = self._preset_visual_preview_pixmap(self.current_preset, canvas_w, canvas_h)
+        if (
+            preset_visual_pixmap.isNull()
+            or not self._supports_preset_visual(self.current_preset)
+            or not preset_visual_state["visible"]
+        ):
+            self.preset_visual_item.setVisible(False)
+        else:
+            self.preset_visual_item.setOpacity(preset_visual_state["opacity"])
+            self.preset_visual_item.setPixmap(preset_visual_pixmap)
+            self.preset_visual_item.setOffset(-preset_visual_pixmap.width() / 2, -preset_visual_pixmap.height() / 2)
+            self.preset_visual_item.setPos(
+                preset_visual_state["transform"]["x"],
+                preset_visual_state["transform"]["y"],
+            )
+            self.preset_visual_item.setVisible(True)
         self._refresh_poster_textbox_overlay(canvas_w, canvas_h)
         self._request_presets_preview_refresh(preset_ids=[self.current_preset])
+        if hasattr(self, "main_tabs") and hasattr(self, "top_workspace") and self.main_tabs.currentWidget() is self.top_workspace:
+            self.top_workspace.refresh_current_panel()
 
     def _top_template_image(self, preset_id: str):
         if preset_id in self.top_template_cache:
@@ -5120,6 +6047,7 @@ class ARPlusWindow(QMainWindow):
             render_scale=scale,
             resample=resample,
             textbox_scale_factor=1.0,
+            include_poster_textbox=False,
         )
         top_config = self._top_config(preset_id)
         vignette_x = int(round(TOP_VIGNETTE_X * scale))
@@ -5127,7 +6055,16 @@ class ARPlusWindow(QMainWindow):
         vignette_w = max(1, int(round(TOP_VIGNETTE_W * scale)))
         vignette_h = max(1, int(round(TOP_VIGNETTE_H * scale)))
         vignette_radius = max(1, int(round(TOP_VIGNETTE_RADIUS * scale)))
-        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        template = self._top_template_image(preset_id)
+        background_rgba = (8, 20, 56, 255)
+        if template is not None:
+            sample = template.getpixel((0, 0))
+            if isinstance(sample, tuple):
+                if len(sample) >= 3:
+                    background_rgba = (int(sample[0]), int(sample[1]), int(sample[2]), 255)
+            if template.size != (canvas_w, canvas_h):
+                template = template.resize((canvas_w, canvas_h), resample)
+        canvas = Image.new("RGBA", (canvas_w, canvas_h), background_rgba)
 
         if poster_canvas is not None:
             src_w, src_h = poster_canvas.size
@@ -5140,10 +6077,10 @@ class ARPlusWindow(QMainWindow):
             final_w = max(1, int(round(base_w * scale_x)))
             final_h = max(1, int(round(base_h * scale_y)))
             transformed = covered.resize((final_w, final_h), resample)
-            poster_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+            cover_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
             paste_x = vignette_x + int(round(float(top_config["offset_x"]) * scale))
             paste_y = vignette_y + int(round(float(top_config["offset_y"]) * scale))
-            poster_layer.paste(transformed, (paste_x, paste_y), transformed.getchannel("A"))
+            cover_layer.paste(transformed, (paste_x, paste_y), transformed.getchannel("A"))
             clip_mask = Image.new("L", (canvas_w, canvas_h), 0)
             clip_draw = ImageDraw.Draw(clip_mask)
             clip_draw.rounded_rectangle(
@@ -5151,14 +6088,11 @@ class ARPlusWindow(QMainWindow):
                 radius=vignette_radius,
                 fill=255,
             )
-            poster_alpha = poster_layer.getchannel("A")
-            poster_layer.putalpha(ImageChops.multiply(poster_alpha, clip_mask))
-            canvas.alpha_composite(poster_layer)
+            cover_alpha = cover_layer.getchannel("A")
+            cover_layer.putalpha(ImageChops.multiply(cover_alpha, clip_mask))
+            canvas.alpha_composite(cover_layer)
 
-        template = self._top_template_image(preset_id)
         if template is not None:
-            if template.size != (canvas_w, canvas_h):
-                template = template.resize((canvas_w, canvas_h), resample)
             canvas.alpha_composite(template)
         return canvas
 
@@ -5172,6 +6106,7 @@ class ARPlusWindow(QMainWindow):
         render_scale: float = 1.0,
         resample=Image.Resampling.LANCZOS,
         textbox_scale_factor: float = 1.0,
+        include_poster_textbox: bool = True,
     ):
         if self._is_top_preset(source_preset_id):
             return self._compose_top_canvas(
@@ -5188,8 +6123,39 @@ class ARPlusWindow(QMainWindow):
         pos_scale_x = canvas_w / max(1, source_w)
         pos_scale_y = canvas_h / max(1, source_h)
         canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        preset_visual_composited = False
 
         for layer in RENDER_LAYER_ORDER:
+            if layer == "gradient" and not preset_visual_composited:
+                preset_visual_img = self._render_preset_visual_image(
+                    source_preset_id,
+                    canvas_w,
+                    canvas_h,
+                    resample=resample,
+                    log_upscale=log_upscale,
+                )
+                preset_visual_state = self._layer_state(source_preset_id, PRESET_VISUAL_LAYER_ID)
+                if preset_visual_img is not None and preset_visual_state["visible"]:
+                    lw, lh = preset_visual_img.size
+                    tx = preset_visual_state["transform"]["x"] * pos_scale_x
+                    ty = preset_visual_state["transform"]["y"] * pos_scale_y
+                    x = int(tx - lw / 2)
+                    y = int(ty - lh / 2)
+                    rendered_layer = preset_visual_img
+                    if preset_visual_state["opacity"] < 1.0:
+                        rendered_layer = preset_visual_img.copy()
+                        alpha = rendered_layer.getchannel("A").point(
+                            lambda px: int(px * preset_visual_state["opacity"])
+                        )
+                        rendered_layer.putalpha(alpha)
+                    composed_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+                    composed_layer.paste(
+                        rendered_layer,
+                        (x, y),
+                        rendered_layer.getchannel("A"),
+                    )
+                    canvas.alpha_composite(composed_layer)
+                preset_visual_composited = True
             if skip_logo and layer == "logo":
                 continue
             if not self._is_layer_allowed(source_preset_id, layer):
@@ -5256,15 +6222,46 @@ class ARPlusWindow(QMainWindow):
             )
             canvas.alpha_composite(composed_layer)
 
-        textbox_draw = self._build_poster_textbox_render(
-            source_preset_id,
-            canvas_w,
-            canvas_h,
-            size_factor=textbox_scale_factor,
-        )
-        if textbox_draw is not None:
-            textbox_img, textbox_x, textbox_y = textbox_draw
-            canvas.alpha_composite(textbox_img, (textbox_x, textbox_y))
+        if not preset_visual_composited:
+            preset_visual_img = self._render_preset_visual_image(
+                source_preset_id,
+                canvas_w,
+                canvas_h,
+                resample=resample,
+                log_upscale=log_upscale,
+            )
+            preset_visual_state = self._layer_state(source_preset_id, PRESET_VISUAL_LAYER_ID)
+            if preset_visual_img is not None and preset_visual_state["visible"]:
+                lw, lh = preset_visual_img.size
+                tx = preset_visual_state["transform"]["x"] * pos_scale_x
+                ty = preset_visual_state["transform"]["y"] * pos_scale_y
+                x = int(tx - lw / 2)
+                y = int(ty - lh / 2)
+                rendered_layer = preset_visual_img
+                if preset_visual_state["opacity"] < 1.0:
+                    rendered_layer = preset_visual_img.copy()
+                    alpha = rendered_layer.getchannel("A").point(
+                        lambda px: int(px * preset_visual_state["opacity"])
+                    )
+                    rendered_layer.putalpha(alpha)
+                composed_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+                composed_layer.paste(
+                    rendered_layer,
+                    (x, y),
+                    rendered_layer.getchannel("A"),
+                )
+                canvas.alpha_composite(composed_layer)
+
+        if include_poster_textbox:
+            textbox_draw = self._build_poster_textbox_render(
+                source_preset_id,
+                canvas_w,
+                canvas_h,
+                size_factor=textbox_scale_factor,
+            )
+            if textbox_draw is not None:
+                textbox_img, textbox_x, textbox_y = textbox_draw
+                canvas.alpha_composite(textbox_img, (textbox_x, textbox_y))
         return canvas
 
     def _compose_preset_canvas(
@@ -5274,6 +6271,7 @@ class ARPlusWindow(QMainWindow):
         render_scale: float = 1.0,
         resample=Image.Resampling.LANCZOS,
         textbox_scale_factor: float = 1.0,
+        include_poster_textbox: bool = True,
     ):
         preset = PRESETS[preset_id]
         return self._compose_canvas_from_preset(
@@ -5284,6 +6282,7 @@ class ARPlusWindow(QMainWindow):
             render_scale=render_scale,
             resample=resample,
             textbox_scale_factor=textbox_scale_factor,
+            include_poster_textbox=include_poster_textbox,
         )
 
     def _compose_export_target_canvas(self, export_id: str, log_upscale: bool = False):
@@ -5342,7 +6341,7 @@ class ARPlusWindow(QMainWindow):
                 continue
             expanded.append(preset_id)
             if preset_id == "poster":
-                expanded.extend(TOP_PRESET_IDS)
+                expanded.append("top_1")
         seen = set()
         ordered = []
         for preset_id in expanded:
@@ -5385,7 +6384,7 @@ class ARPlusWindow(QMainWindow):
             self._refresh_presets_preview_borders()
             return
         if not self.preset_preview_queue:
-            ordered_ids = [preset_id for preset_id in PRESETS if preset_id in self.preset_preview_dirty]
+            ordered_ids = [preset_id for preset_id in ARPLUS_VISIBLE_PRESET_IDS if preset_id in self.preset_preview_dirty]
             if self.current_preset in ordered_ids:
                 ordered_ids.remove(self.current_preset)
                 ordered_ids.insert(0, self.current_preset)
@@ -5459,9 +6458,26 @@ class ARPlusWindow(QMainWindow):
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        if bool(layer_state["transform"].get("flip_x", False)) and self._layer_supports_horizontal_flip(layer_id):
+            rendered = rendered.transformed(
+                QTransform().scale(-1.0, 1.0),
+                Qt.TransformationMode.SmoothTransformation,
+            )
         if layer_id == "logo":
             return self._apply_logo_shadow_preview(rendered)
         return rendered
+
+    def _preset_visual_preview_pixmap(self, preset_id: str, canvas_w: int, canvas_h: int) -> QPixmap:
+        image = self._render_preset_visual_image(
+            preset_id,
+            canvas_w,
+            canvas_h,
+            resample=Image.Resampling.BICUBIC,
+            log_upscale=False,
+        )
+        if image is None:
+            return QPixmap()
+        return self._pil_to_qpixmap(image)
 
     def _select_export_dir(self):
         path = QFileDialog.getExistingDirectory(
@@ -5472,6 +6488,57 @@ class ARPlusWindow(QMainWindow):
         if path:
             self.export_dir.setText(path)
             self._remember_recent_dir("export", path)
+
+    def _open_export_dir(self):
+        export_dir = Path(self.export_dir.text()).expanduser()
+        export_dir.mkdir(parents=True, exist_ok=True)
+        self._remember_recent_dir("export", export_dir)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(export_dir)))
+
+    def _export_single_top_dialog(self, preset_id: str):
+        if preset_id not in TOP_PRESET_IDS:
+            return
+        default_dir = self._recent_dir("export")
+        suggested = default_dir / f"{self._top_export_basename(preset_id, self._sanitize_base_name(self.base_name_input.text()))}.jpg"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            PRESETS[preset_id]["label"],
+            str(suggested),
+            "JPEG (*.jpg *.jpeg)",
+        )
+        if not file_path:
+            return
+        out_path = Path(file_path).expanduser()
+        if out_path.suffix.lower() not in {".jpg", ".jpeg"}:
+            out_path = out_path.with_suffix(".jpg")
+        self._remember_recent_dir("export", out_path.parent)
+        panel = getattr(getattr(self, "top_workspace", None), "panels", {}).get(preset_id)
+        if panel is not None:
+            panel.export_to_jpeg(out_path)
+            return
+        canvas = self._compose_export_target_canvas(preset_id, log_upscale=True)
+        canvas.convert("RGB").save(out_path, quality=95)
+
+    def _export_all_tops_dialog(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choisir un dossier d'export TOP",
+            str(self._recent_dir("export")),
+        )
+        if not folder:
+            return
+        export_root_dir = Path(folder).expanduser()
+        export_root_dir.mkdir(parents=True, exist_ok=True)
+        self._remember_recent_dir("export", export_root_dir)
+        base_name = self._sanitize_base_name(self.base_name_input.text())
+        export_dir = self._project_export_dir(export_root_dir, base_name)
+        for export_id in TOP_EXPORT_IDS:
+            panel = getattr(getattr(self, "top_workspace", None), "panels", {}).get(export_id)
+            out_path = export_dir / f"{self._top_export_basename(export_id, base_name)}.jpg"
+            if panel is not None:
+                panel.export_to_jpeg(out_path)
+            else:
+                self._export_target(export_id, export_dir, base_name)
 
     def _selected_exports(self):
         if not hasattr(self, "export_checks"):
@@ -5493,20 +6560,16 @@ class ARPlusWindow(QMainWindow):
             self.scale_value_label.setText(str(int(self.scale_slider.value())))
 
     def _sync_poster_textbox_controls(self):
-        if not hasattr(self, "poster_textbox_check"):
+        if not hasattr(self, "poster_textbox_input"):
             return
-        self.poster_textbox_check.blockSignals(True)
-        self.poster_textbox_check.setChecked(self.poster_textbox_enabled)
-        self.poster_textbox_check.blockSignals(False)
         self.poster_textbox_input.blockSignals(True)
         self.poster_textbox_input.setText(self.poster_textbox_text)
         self.poster_textbox_input.blockSignals(False)
-
-        allowed = self.current_preset == "poster"
-        self.poster_textbox_check.setEnabled(allowed)
-        self.poster_textbox_input.setEnabled(allowed and self.poster_textbox_enabled)
+        self.poster_textbox_input.setEnabled(True)
 
     def _sync_top_controls(self):
+        if hasattr(self, "top_workspace"):
+            self.top_workspace.refresh_from_owner()
         if not hasattr(self, "top_sync_check"):
             return
         display_preset_id = self.current_preset if self._is_top_preset() else TOP_PRESET_IDS[0]
@@ -5578,9 +6641,12 @@ class ARPlusWindow(QMainWindow):
         self.logo_text_upper_check.setChecked(self.logo_text_force_upper)
         self.logo_text_upper_check.blockSignals(False)
 
-        self.logo_text_line_spacing_spin.blockSignals(True)
-        self.logo_text_line_spacing_spin.setValue(self.logo_text_line_spacing)
-        self.logo_text_line_spacing_spin.blockSignals(False)
+        if hasattr(self, "logo_text_line_spacing_combo"):
+            spacing_idx = self.logo_text_line_spacing_combo.findData(self.logo_text_line_spacing)
+            self.logo_text_line_spacing_combo.blockSignals(True)
+            if spacing_idx >= 0:
+                self.logo_text_line_spacing_combo.setCurrentIndex(spacing_idx)
+            self.logo_text_line_spacing_combo.blockSignals(False)
         if hasattr(self, "logo_font_value_label"):
             self.logo_font_value_label.setText(self._logo_font_status_text())
         if hasattr(self, "logo_font_default_btn"):
@@ -5624,10 +6690,12 @@ class ARPlusWindow(QMainWindow):
             return
 
         config = self._gradient_config()
+        preset_allows_gradient_edit = not self._is_top_preset()
 
         self.gradient_enable_check.blockSignals(True)
         self.gradient_enable_check.setChecked(config["enabled"])
         self.gradient_enable_check.blockSignals(False)
+        self.gradient_enable_check.setEnabled(preset_allows_gradient_edit)
 
         self.gradient_mode_combo.blockSignals(True)
         mode_idx = self.gradient_mode_combo.findData(config["mode"])
@@ -5649,7 +6717,7 @@ class ARPlusWindow(QMainWindow):
         self.gradient_stretch_slider.setValue(int(config["stretch"]))
         self.gradient_stretch_slider.blockSignals(False)
 
-        controls_enabled = config["enabled"]
+        controls_enabled = preset_allows_gradient_edit and config["enabled"]
         self.gradient_mode_combo.setEnabled(controls_enabled)
         self.gradient_direction_combo.setEnabled(controls_enabled)
         self.gradient_distance_slider.setEnabled(controls_enabled)
@@ -5660,7 +6728,7 @@ class ARPlusWindow(QMainWindow):
 
     def _guide_path_for_preset(self, preset_id: str):
         asset_dirs = [ASSET_GUIDES_DIR, ASSET_DIR]
-        if preset_id == "poster":
+        if preset_id in {"poster", "poster_no_logo"}:
             ordered = []
             for name in POSTER_GUIDE_FILES.get(self.poster_guide_variant, []):
                 if name not in ordered:
@@ -5942,9 +7010,17 @@ class ARPlusWindow(QMainWindow):
                 layer: {"path": asset.path, "loaded": bool(asset.path)}
                 for layer, asset in self.assets.items()
             },
+            "preset_visuals": {
+                preset_id: {"path": self._preset_visual_asset(preset_id).path, "loaded": bool(self._preset_visual_asset(preset_id).path)}
+                for preset_id in PRESET_VISUAL_PRESET_IDS
+            },
             "top": {
                 "sync_all": self.top_sync_all,
                 "settings": copy.deepcopy(self.top_settings),
+                "imports": {
+                    preset_id: self._top_asset(preset_id).path
+                    for preset_id in TOP_PRESET_IDS
+                },
             },
             "logo_text": {
                 "enabled": self.logo_text_enabled,
@@ -5953,6 +7029,7 @@ class ARPlusWindow(QMainWindow):
                 "align": self.logo_text_align,
                 "force_upper": self.logo_text_force_upper,
                 "line_spacing": self.logo_text_line_spacing,
+                "line_spacing_mode": "offset",
                 "color": self.logo_text_color,
                 "font_name": self.logo_text_font_name,
                 "font_page_url": self.logo_text_font_page_url,
@@ -5960,7 +7037,7 @@ class ARPlusWindow(QMainWindow):
                 "font_file": self.logo_text_font_file,
             },
             "poster_textbox": {
-                "enabled": self.poster_textbox_enabled,
+                "enabled": bool(self.poster_textbox_text.strip()),
                 "text": self.poster_textbox_text,
             },
             "logo_shadow": {
@@ -6039,11 +7116,24 @@ class ARPlusWindow(QMainWindow):
                 else:
                     asset_paths[layer_id] = ""
 
+        payload_preset_visuals = payload.get("preset_visuals", {})
+        preset_visual_paths = {}
+        if isinstance(payload_preset_visuals, dict):
+            for preset_id in PRESET_VISUAL_PRESET_IDS:
+                raw_visual = payload_preset_visuals.get(preset_id, "")
+                if isinstance(raw_visual, dict):
+                    preset_visual_paths[preset_id] = str(raw_visual.get("path", "") or "")
+                elif isinstance(raw_visual, str):
+                    preset_visual_paths[preset_id] = raw_visual
+                else:
+                    preset_visual_paths[preset_id] = ""
+
         return {
             "current_preset": payload.get("current_preset", "poster"),
             "active_layer": payload.get("active_layer", self.active_layer),
             "state": copy.deepcopy(payload.get("state", self.state)),
             "assets": asset_paths,
+            "preset_visuals": preset_visual_paths,
             "selected_exports": payload.get("selected_exports", []),
             "export_dir": payload.get("export_dir", self.export_dir.text() if hasattr(self, "export_dir") else ""),
             "guides": payload.get("guides", {}),
@@ -6053,7 +7143,7 @@ class ARPlusWindow(QMainWindow):
             "poster_textbox": copy.deepcopy(payload.get("poster_textbox", {})),
             "logo_shadow": copy.deepcopy(payload.get("logo_shadow", {})),
             "metadata_id": payload.get("metadata_id", payload.get("export_id", "")),
-            "base_name": payload.get("base_name", "Name"),
+            "base_name": self._display_base_name_value(payload.get("base_name", "")),
         }
 
     def _load_project_snapshot_from_path(self, file_path: Path):
@@ -6127,15 +7217,15 @@ class ARPlusWindow(QMainWindow):
         self.logo_text = ""
         self.logo_text_size = 300
         self.logo_text_align = "center"
-        self.logo_text_force_upper = True
-        self.logo_text_line_spacing = 100
+        self.logo_text_force_upper = False
+        self.logo_text_line_spacing = 0
         self.logo_text_color = "#FFFFFF"
         self.logo_text_font_name = ""
         self.logo_text_font_page_url = ""
         self.logo_text_font_download_url = ""
         self.logo_text_font_file = ""
         self.poster_textbox_enabled = True
-        self.poster_textbox_text = "TEXTE BOX"
+        self.poster_textbox_text = ""
         self.logo_shadow_enabled = False
         self.logo_shadow_distance = 5
         self.logo_shadow_blur = 5
@@ -6148,13 +7238,19 @@ class ARPlusWindow(QMainWindow):
         self.top_settings = {
             preset_id: self._default_top_config() for preset_id in TOP_PRESET_IDS
         }
+        self.top_assets = {
+            preset_id: LayerAsset() for preset_id in TOP_PRESET_IDS
+        }
+        self.preset_visual_assets = {
+            preset_id: LayerAsset() for preset_id in PRESET_VISUAL_PRESET_IDS
+        }
         self.top_sync_all = False
         self.guides_visible = True
         self.guides_opacity = GUIDE_OPACITY_DEFAULT
         self.poster_guide_variant = "1"
 
         self.metadata_id_input.setText("")
-        self.base_name_input.setText("Name")
+        self.base_name_input.setText("")
         self._set_all_exports_checked(True)
         self._sync_logo_controls()
         self._sync_gradient_controls()
@@ -6210,6 +7306,158 @@ class ARPlusWindow(QMainWindow):
                 issues.append(f"{export_meta['label']} (zone transparente)")
         return issues
 
+    def _export_validation_source(self, export_id: str) -> tuple[str, tuple[int, int]]:
+        export_meta = EXPORT_TARGETS[export_id]
+        if export_id in TOP_EXPORT_IDS:
+            return "poster", PRESETS["poster"]["size"]
+        return export_meta["source_preset"], export_meta["size"]
+
+    def _layer_export_content_bbox(
+        self,
+        source_preset_id: str,
+        layer_id: str,
+        target_size: tuple[int, int],
+        resample=Image.Resampling.LANCZOS,
+    ):
+        if not self._is_layer_allowed(source_preset_id, layer_id):
+            return None
+        layer_state = self._layer_state(source_preset_id, layer_id)
+        if not layer_state["visible"]:
+            return None
+        target_w, target_h = target_size
+        if layer_id == PRESET_VISUAL_LAYER_ID:
+            rendered = self._render_preset_visual_image(
+                source_preset_id,
+                target_w,
+                target_h,
+                resample=resample,
+                log_upscale=False,
+            )
+        else:
+            rendered = self._render_layer_for_export(
+                layer_id,
+                source_preset_id,
+                canvas_w=target_w,
+                canvas_h=target_h,
+                resample=resample,
+            )
+        if rendered is None:
+            return None
+        rendered_w, rendered_h = rendered.size
+        if rendered_w <= 0 or rendered_h <= 0:
+            return None
+
+        bbox = self._alpha_bbox_for_pil_image(rendered)
+        if bbox is None:
+            bbox_left = 0.0
+            bbox_top = 0.0
+            bbox_right = float(rendered_w)
+            bbox_bottom = float(rendered_h)
+        else:
+            bbox_left, bbox_top, bbox_right, bbox_bottom = bbox
+
+        source_w, source_h = PRESETS[source_preset_id]["size"]
+        pos_scale_x = target_w / max(1, source_w)
+        pos_scale_y = target_h / max(1, source_h)
+
+        if layer_id == "gradient":
+            origin_x = 0.0
+            origin_y = 0.0
+        else:
+            anchor = layer_state["transform"].get("anchor", "center")
+            tx = layer_state["transform"]["x"] * pos_scale_x
+            ty = layer_state["transform"]["y"] * pos_scale_y
+            if anchor == "bottom_left_visible":
+                origin_x = tx - bbox_left
+                origin_y = ty - bbox_bottom
+            else:
+                origin_x = tx - (rendered_w / 2.0)
+                origin_y = ty - (rendered_h / 2.0)
+            if layer_id in CHARACTER_LAYERS:
+                origin_x = tx - (rendered_w / 2.0)
+                origin_y = ty - rendered_h
+
+        return (
+            float(origin_x + bbox_left),
+            float(origin_y + bbox_top),
+            float(origin_x + bbox_right),
+            float(origin_y + bbox_bottom),
+        )
+
+    def _bbox_fills_target(self, bbox, target_size: tuple[int, int], tolerance: float = 2.0) -> bool:
+        if bbox is None:
+            return False
+        target_w, target_h = target_size
+        left, top, right, bottom = bbox
+        return not (
+            left > tolerance
+            or top > tolerance
+            or right < (target_w - tolerance)
+            or bottom < (target_h - tolerance)
+        )
+
+    def _collect_layout_issues(self, export_ids: list[str]) -> list[str]:
+        issues: list[str] = []
+        seen: set[str] = set()
+        character_labels = {
+            "character": "Perso",
+            "character2": "Perso 2",
+            "character3": "Perso 3",
+            "character4": "Perso 4",
+        }
+        tolerance = 2.0
+
+        for export_id in export_ids:
+            export_label = EXPORT_TARGETS[export_id]["label"]
+            source_preset_id, target_size = self._export_validation_source(export_id)
+            target_w, target_h = target_size
+
+            if self._is_layer_allowed(source_preset_id, "background"):
+                background_bbox = self._layer_export_content_bbox(source_preset_id, "background", target_size)
+                preset_visual_bbox = self._layer_export_content_bbox(
+                    source_preset_id,
+                    PRESET_VISUAL_LAYER_ID,
+                    target_size,
+                )
+                background_key = f"{export_id}:background"
+                has_valid_background_source = background_bbox is not None or preset_visual_bbox is not None
+                if not has_valid_background_source:
+                    if background_key not in seen:
+                        issues.append(f"{export_label}: fond ou visuel absent ou invalide.")
+                        seen.add(background_key)
+                else:
+                    background_fills = self._bbox_fills_target(background_bbox, target_size, tolerance)
+                    preset_visual_fills = self._bbox_fills_target(preset_visual_bbox, target_size, tolerance)
+                    if not background_fills and not preset_visual_fills:
+                        if background_key not in seen:
+                            issues.append(f"{export_label}: le fond ou le visuel ne remplit pas tout le cadre.")
+                            seen.add(background_key)
+
+            for layer_id in CHARACTER_LAYERS:
+                if not self._is_layer_allowed(source_preset_id, layer_id):
+                    continue
+                if not self._layer_has_loaded_asset(layer_id):
+                    continue
+                layer_state = self._layer_state(source_preset_id, layer_id)
+                if not layer_state["visible"]:
+                    continue
+                character_bbox = self._layer_export_content_bbox(
+                    source_preset_id,
+                    layer_id,
+                    target_size,
+                )
+                if character_bbox is None:
+                    continue
+                _left, _top, _right, bottom = character_bbox
+                issue_key = f"{export_id}:{layer_id}:bottom"
+                if bottom < (target_h - tolerance) and issue_key not in seen:
+                    issues.append(
+                        f"{export_label}: {character_labels.get(layer_id, layer_id)} ne touche pas le bas du cadre."
+                    )
+                    seen.add(issue_key)
+
+        return issues
+
     def _export_selected(self):
         selected = self._selected_exports()
         if not selected:
@@ -6220,24 +7468,29 @@ class ARPlusWindow(QMainWindow):
             export_id for export_id in selected if export_id in TRANSPARENCY_VALIDATE_EXPORTS
         ]
         transparency_issues = self._collect_transparency_issues(exports_to_validate)
-        if transparency_issues:
-            warning_lines = "\n".join(f"- {label}" for label in transparency_issues)
-            self._log("Export annule: transparence detectee sur presets non-logo.")
+        layout_issues = self._collect_layout_issues(exports_to_validate)
+        if transparency_issues or layout_issues:
+            warning_lines = []
+            for label in transparency_issues:
+                warning_lines.append(f"- {label}")
+            for label in layout_issues:
+                warning_lines.append(f"- {label}")
+            self._log("Export annule: controles export invalides.")
             QMessageBox.warning(
                 self,
-                "Transparence detectee",
-                "Export annule.\nUne partie du canvas est transparente sur:\n"
-                + warning_lines
-                + "\n\nCorrigez le background ou le cadrage, puis relancez.",
+                "Export impossible",
+                "Export annule.\nCorrigez les problemes suivants avant de relancer :\n"
+                + "\n".join(warning_lines),
             )
             self.progress.setValue(0)
             return
 
-        export_dir = Path(self.export_dir.text()).expanduser()
-        export_dir.mkdir(parents=True, exist_ok=True)
-        self._remember_recent_dir("export", export_dir)
-
         base_name = self._sanitize_base_name(self.base_name_input.text())
+        export_root_dir = Path(self.export_dir.text()).expanduser()
+        export_root_dir.mkdir(parents=True, exist_ok=True)
+        self._remember_recent_dir("export", export_root_dir)
+        export_dir = self._project_export_dir(export_root_dir, base_name)
+
         self.progress.setValue(0)
         total = len(selected)
         exported_paths: dict[str, Path] = {}
@@ -6254,22 +7507,52 @@ class ARPlusWindow(QMainWindow):
                 self._log(f"Erreur export {export_id}: {exc}")
             self.progress.setValue(int((idx / total) * 100))
 
+        if "poster" in exported_paths and self._has_poster_info_banner():
+            try:
+                exported_paths["poster-sans-bandeau"] = self._export_poster_without_info(export_dir, base_name)
+            except Exception as exc:
+                self._log(f"Erreur export poster sans bandeau: {exc}")
+        if "poster_no_logo" in exported_paths and self._has_poster_info_banner():
+            try:
+                exported_paths["poster-nologo-sans-bandeau"] = self._export_poster_no_logo_without_info(export_dir, base_name)
+            except Exception as exc:
+                self._log(f"Erreur export poster-nologo sans bandeau: {exc}")
+
         if exported_paths:
             try:
                 self._write_metadata_file(export_dir, exported_paths)
             except Exception as exc:
                 self._log(f"Erreur metadata.json: {exc}")
-        self._log("Export terminé.")
+        self._log(f"Export terminé: {export_dir}")
 
     def _export_target_output_path(self, export_id: str, export_dir: Path, base_name: str) -> Path:
         export_meta = EXPORT_TARGETS[export_id]
         ext = "png" if export_meta.get("png") else "jpg"
+        safe_base = self._slugify_export_part(base_name, "Projet")
         if export_id in TOP_EXPORT_IDS:
             top_number = PRESETS[export_meta["source_preset"]]["top_number"]
-            safe_title = re.sub(r'[\\/:*?"<>|]', "-", base_name).strip() or "export"
             date_suffix = datetime.now().strftime("%Y-%m-%d")
-            return export_dir / f"TOP {top_number} - {safe_title} - {date_suffix}.{ext}"
-        return export_dir / f"{export_meta['file_stub']}-{base_name}.{ext}"
+            return export_dir / f"TOP-{top_number}-{safe_base}-{date_suffix}.{ext}"
+        if export_id in {"poster", "poster_no_logo"}:
+            return export_dir / f"{self._poster_export_stub(export_id)}-{safe_base}.{ext}"
+        return export_dir / f"{export_meta['file_stub']}-{safe_base}.{ext}"
+
+    def _poster_without_info_output_path(self, export_dir: Path, base_name: str) -> Path:
+        safe_base = self._slugify_export_part(base_name, "Projet")
+        return export_dir / f"POSTER-{safe_base}.jpg"
+
+    def _poster_no_logo_without_info_output_path(self, export_dir: Path, base_name: str) -> Path:
+        safe_base = self._slugify_export_part(base_name, "Projet")
+        return export_dir / f"poster-nologo-{safe_base}.jpg"
+
+    def _project_export_dir(self, export_root_dir: Path, base_name: str) -> Path:
+        folder_name = self._sanitize_base_name(base_name)
+        if export_root_dir.name.casefold() == folder_name.casefold():
+            project_dir = export_root_dir
+        else:
+            project_dir = export_root_dir / folder_name
+        project_dir.mkdir(parents=True, exist_ok=True)
+        return project_dir
 
     def _export_target(self, export_id: str, export_dir: Path, base_name: str) -> Path:
         export_meta = EXPORT_TARGETS[export_id]
@@ -6281,6 +7564,30 @@ class ARPlusWindow(QMainWindow):
         else:
             canvas.save(out_path)
         self._log(f"Export {export_meta['label']}: {out_path}")
+        return out_path
+
+    def _export_poster_without_info(self, export_dir: Path, base_name: str) -> Path:
+        canvas = self._compose_preset_canvas(
+            "poster",
+            log_upscale=True,
+            include_poster_textbox=False,
+        )
+        out_path = self._poster_without_info_output_path(export_dir, base_name)
+        canvas.convert("RGB").save(out_path, quality=95)
+        self._log(f"Export Poster sans bandeau: {out_path}")
+        return out_path
+
+    def _export_poster_no_logo_without_info(self, export_dir: Path, base_name: str) -> Path:
+        canvas = self._compose_canvas_from_preset(
+            "poster",
+            PRESETS["poster"]["size"],
+            skip_logo=True,
+            log_upscale=True,
+            include_poster_textbox=False,
+        )
+        out_path = self._poster_no_logo_without_info_output_path(export_dir, base_name)
+        canvas.convert("RGB").save(out_path, quality=95)
+        self._log(f"Export Poster-nologo sans bandeau: {out_path}")
         return out_path
 
     def _render_layer_for_export(
@@ -6323,6 +7630,8 @@ class ARPlusWindow(QMainWindow):
 
         target_size = (max(1, int(sw * ratio)), max(1, int(sh * ratio)))
         rendered = source.resize(target_size, resample)
+        if bool(state["transform"].get("flip_x", False)) and self._layer_supports_horizontal_flip(layer_id):
+            rendered = rendered.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         if layer_id == "logo":
             return self._apply_logo_shadow_pil(rendered)
         return rendered
@@ -6351,7 +7660,7 @@ class ARPlusWindow(QMainWindow):
 
     def _metadata_title(self) -> str:
         title = self.base_name_input.text().strip()
-        return title or "Name"
+        return title or "Projet"
 
     def _metadata_id(self) -> str:
         if not hasattr(self, "metadata_id_input"):
@@ -6361,8 +7670,9 @@ class ARPlusWindow(QMainWindow):
     def _write_metadata_file(self, export_dir: Path, exported_paths: dict[str, Path]) -> Path:
         exports_payload = {}
         for export_id, out_path in exported_paths.items():
-            export_meta = EXPORT_TARGETS[export_id]
-            exports_payload[export_meta["metadata_key"]] = str(out_path.resolve())
+            export_meta = EXPORT_TARGETS.get(export_id)
+            metadata_key = export_meta["metadata_key"] if export_meta is not None else export_id
+            exports_payload[metadata_key] = str(out_path.resolve())
 
         payload = {
             "id": self._metadata_id(),
@@ -6376,15 +7686,38 @@ class ARPlusWindow(QMainWindow):
         )
         return metadata_path
 
+    def _slugify_export_part(self, raw_value: str, fallback: str = "export") -> str:
+        cleaned = (raw_value or "").strip()
+        cleaned = re.sub(r'[\\/:*?"<>|]+', "-", cleaned)
+        cleaned = re.sub(r"\s+", "-", cleaned)
+        cleaned = re.sub(r"-{2,}", "-", cleaned)
+        cleaned = cleaned.strip(" .-_")
+        return cleaned or fallback
+
+    def _poster_export_stub(self, export_id: str) -> str:
+        has_banner = self._has_poster_info_banner()
+        if export_id == "poster":
+            return "poster-info" if has_banner else "POSTER"
+        if export_id == "poster_no_logo":
+            return "poster-info-nologo" if has_banner else "poster-nologo"
+        return EXPORT_TARGETS[export_id]["file_stub"]
+
+    def _display_base_name_value(self, raw_value) -> str:
+        text = str(raw_value or "").strip()
+        if text in {"", "Name", "Projet"}:
+            return ""
+        return text
+
 
     def _sanitize_base_name(self, raw_name: str) -> str:
         name = (raw_name or "").strip()
         cleaned = "".join(ch for ch in name if ch not in '<>:"/\\|?*')
         cleaned = cleaned.strip().strip(".")
-        return cleaned or "Name"
+        return cleaned or "Projet"
 
 
 def main():
+    _configure_qt_multimedia_logging()
     app = QApplication(sys.argv)
     app_icon_path = next(
         (
@@ -6399,12 +7732,31 @@ def main():
         ),
         ASSET_LOGO_DIR / "arplus.ico",
     )
+    app_icon = QIcon()
     if app_icon_path.exists():
         app_icon = QIcon(str(app_icon_path))
         if not app_icon.isNull():
             app.setWindowIcon(app_icon)
-    window = ARPlusWindow()
-    window.show()
+    splash = None
+    if BOOT_VIDEO_PATH.exists():
+        splash = BootVideoDialog(app_icon if not app_icon.isNull() else None)
+        splash.show()
+        app.processEvents()
+
+    window_holder = {}
+
+    def launch_window():
+        if "window" in window_holder:
+            return
+        window = ARPlusWindow()
+        window_holder["window"] = window
+        window.show()
+        window.warmup_workspace_cache()
+
+    if splash is not None:
+        splash.bootFinished.connect(launch_window)
+    else:
+        launch_window()
     return app.exec()
 
 

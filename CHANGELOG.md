@@ -20,6 +20,8 @@
 - Memorisation du dernier dossier utilise pour le chargement projet.
 - Sauvegarde et restauration du dossier d'export dans les snapshots projet.
 - Autosave de securite avant certaines operations de reset et de chargement projet.
+- Reorganisation des assets racine vers des dossiers logiques `asset/gabarits`, `asset/TOP` et `asset/logo`.
+- Renommage des gabarits, templates TOP et icones pour un nommage plus propre.
 
 ### Calques et personnages
 - Correction de la selection souris des PNG personnages pour ne prendre que les pixels visibles.
@@ -70,3 +72,13 @@
 
 ### Divers
 - Stabilisation generale de l'ergonomie autour du logo texte, des gabarits et des imports.
+
+### TOP 1 a TOP 5
+- Integration directe des `TOP 1` a `TOP 5` dans `ARPlus` comme presets et exports.
+- Utilisation automatique du poster courant comme source des TOP, sans import intermediaire.
+- Ajout d'une preview native des TOP dans la fenetre principale et dans la bande d'aperus.
+- Ajout des reglages `Offset X`, `Offset Y`, `Zoom`, `Stretch X`, `Stretch Y` pour chaque TOP.
+- Ajout de l'option `Appliquer a tous les TOP`.
+- Sauvegarde/restauration des reglages TOP dans l'undo et les fichiers projet.
+- Reprise du placement exact de `topAR+.py` pour la zone vignette des TOP.
+- Ajout du nommage d'export type `TOP X - Nom - date.jpg`.
