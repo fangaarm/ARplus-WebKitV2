@@ -5079,6 +5079,32 @@ class ARPlusWindow(QMainWindow):
             return QPixmap()
         return logo_asset.pixmap
 
+    def _logo_has_meaningful_transparent_margins(self, tolerance: float = 2.0) -> bool:
+        visible_box = self._layer_visible_box("logo")
+        if visible_box is None:
+            return False
+        source = self._logo_source_image()
+        if source is not None:
+            src_w, src_h = source.size
+        else:
+            source_pixmap = self._logo_layout_source_pixmap()
+            if source_pixmap.isNull():
+                return False
+            src_w = source_pixmap.width()
+            src_h = source_pixmap.height()
+        if src_w <= 0 or src_h <= 0:
+            return False
+        left, top, right, bottom = visible_box
+        return any(
+            margin > tolerance
+            for margin in (
+                float(left),
+                float(top),
+                float(src_w) - float(right),
+                float(src_h) - float(bottom),
+            )
+        )
+
     def _render_logo_fit_candidate(
         self,
         canvas_w: int,
@@ -5406,6 +5432,10 @@ class ARPlusWindow(QMainWindow):
         width, height = PRESETS[preset_id]["size"]
         layer_state = self._layer_state(preset_id, "logo")
         layer_state["fit_mode"] = "contain"
+        if str(layer_state["transform"].get("anchor", "")).lower() == "bottom_left_visible":
+            layer_state["transform"]["x"] = 0.0
+            layer_state["transform"]["y"] = float(height)
+            return
         layer_state["transform"]["anchor"] = "bottom"
         layer_state["transform"]["x"] = width * 0.5
         layer_state["transform"]["y"] = height
@@ -5932,13 +5962,23 @@ class ARPlusWindow(QMainWindow):
                 return
             layer_state["fit_mode"] = "contain"
             if preset_id == "logo":
-                target_scale = LOGO_PRESET_MIN_SCALE
                 if layer_pixmap is not None and not layer_pixmap.isNull():
-                    target_scale = max(target_scale, self._fit_logo_scale_to_canvas(width, height))
-                layer_state["transform"]["anchor"] = "bottom"
-                layer_state["transform"]["scale"] = target_scale
-                layer_state["transform"]["x"] = width * 0.5
-                layer_state["transform"]["y"] = height
+                    target_scale = self._fit_logo_scale_to_canvas(width, height)
+                    if self._logo_has_meaningful_transparent_margins():
+                        layer_state["transform"]["anchor"] = "bottom_left_visible"
+                        layer_state["transform"]["scale"] = target_scale
+                        layer_state["transform"]["x"] = 0.0
+                        layer_state["transform"]["y"] = float(height)
+                    else:
+                        layer_state["transform"]["anchor"] = "bottom"
+                        layer_state["transform"]["scale"] = max(LOGO_PRESET_MIN_SCALE, target_scale)
+                        layer_state["transform"]["x"] = width * 0.5
+                        layer_state["transform"]["y"] = float(height)
+                else:
+                    layer_state["transform"]["anchor"] = "center"
+                    layer_state["transform"]["scale"] = 1.0
+                    layer_state["transform"]["x"] = width * 0.5
+                    layer_state["transform"]["y"] = height * 0.5
             else:
                 layer_state["transform"]["anchor"] = "center"
                 layer_state["transform"]["scale"] = 1.0
