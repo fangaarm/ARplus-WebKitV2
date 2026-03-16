@@ -252,6 +252,7 @@ POSTER_TEXTBOX_BASE = {
     "fill_color": "#0B5FA6",
     "text_color": "#F2F3EE",
 }
+LOGO_PRESET_MIN_SCALE = 1.30
 GUIDE_FILE_PATTERNS = {
     "fullscreen": [
         "gabarit-fullscreen-3480x876.jpg",
@@ -397,13 +398,6 @@ EXPORT_TARGETS = {
         "size": PRESETS["hero"]["size"],
         "file_stub": "hero-banner-2240x672",
         "metadata_key": "hero-banner",
-    },
-    "banner": {
-        "label": "Banner",
-        "source_preset": "hero",
-        "size": (3840, 1152),
-        "file_stub": "banner-3840x1152",
-        "metadata_key": "banner",
     },
     "logo": {
         "label": "Logo",
@@ -1952,8 +1946,13 @@ class ARPlusWindow(QMainWindow):
             state[preset_id]["gradient"]["transform"]["scale"] = 1.0
             state[preset_id]["logo"]["fit_mode"] = "contain"
             state[preset_id]["logo"]["transform"]["x"] = width * 0.5
-            state[preset_id]["logo"]["transform"]["y"] = height * 0.5
-            state[preset_id]["logo"]["transform"]["scale"] = 1.0
+            if preset_id == "logo":
+                state[preset_id]["logo"]["transform"]["anchor"] = "bottom"
+                state[preset_id]["logo"]["transform"]["y"] = height
+                state[preset_id]["logo"]["transform"]["scale"] = LOGO_PRESET_MIN_SCALE
+            else:
+                state[preset_id]["logo"]["transform"]["y"] = height * 0.5
+                state[preset_id]["logo"]["transform"]["scale"] = 1.0
         return state
 
     def _default_recent_dirs(self):
@@ -5387,6 +5386,34 @@ class ARPlusWindow(QMainWindow):
             y += line_height + spacing
         return img
 
+    def _layer_offsets(
+        self,
+        preset_id: str,
+        layer_id: str,
+        layer_state: dict,
+        layer_w: int,
+        layer_h: int,
+    ) -> Tuple[float, float]:
+        if layer_id in CHARACTER_LAYERS:
+            return (-layer_w / 2, -layer_h)
+        if preset_id == "logo" and layer_id == "logo":
+            return (-layer_w / 2, -layer_h)
+        return (-layer_w / 2, -layer_h / 2)
+
+    def _enforce_logo_preset_layout(self, preset_id: str):
+        if preset_id != "logo":
+            return
+        width, height = PRESETS[preset_id]["size"]
+        layer_state = self._layer_state(preset_id, "logo")
+        layer_state["fit_mode"] = "contain"
+        layer_state["transform"]["anchor"] = "bottom"
+        layer_state["transform"]["x"] = width * 0.5
+        layer_state["transform"]["y"] = height
+        layer_state["transform"]["scale"] = max(
+            LOGO_PRESET_MIN_SCALE,
+            self._to_float(layer_state["transform"].get("scale"), 1.0),
+        )
+
     def _poster_textbox_display_text(self):
         return self.poster_textbox_text.strip().upper()
 
@@ -5905,17 +5932,13 @@ class ARPlusWindow(QMainWindow):
                 return
             layer_state["fit_mode"] = "contain"
             if preset_id == "logo":
+                target_scale = LOGO_PRESET_MIN_SCALE
                 if layer_pixmap is not None and not layer_pixmap.isNull():
-                    target_scale = self._fit_logo_scale_to_canvas(width, height)
-                    layer_state["transform"]["anchor"] = "bottom_left_visible"
-                    layer_state["transform"]["scale"] = target_scale
-                    layer_state["transform"]["x"] = 0.0
-                    layer_state["transform"]["y"] = float(height)
-                else:
-                    layer_state["transform"]["anchor"] = "center"
-                    layer_state["transform"]["scale"] = 1.0
-                    layer_state["transform"]["x"] = width * 0.5
-                    layer_state["transform"]["y"] = height * 0.5
+                    target_scale = max(target_scale, self._fit_logo_scale_to_canvas(width, height))
+                layer_state["transform"]["anchor"] = "bottom"
+                layer_state["transform"]["scale"] = target_scale
+                layer_state["transform"]["x"] = width * 0.5
+                layer_state["transform"]["y"] = height
             else:
                 layer_state["transform"]["anchor"] = "center"
                 layer_state["transform"]["scale"] = 1.0
@@ -5924,6 +5947,7 @@ class ARPlusWindow(QMainWindow):
 
     def _refresh_preview(self):
         preset_meta = PRESETS[self.current_preset]
+        self._enforce_logo_preset_layout(self.current_preset)
         canvas_w, canvas_h = preset_meta["size"]
         self._refresh_guide_overlay(canvas_w, canvas_h)
 
@@ -5994,7 +6018,14 @@ class ARPlusWindow(QMainWindow):
             else:
                 pos_x = layer_state["transform"]["x"]
                 pos_y = layer_state["transform"]["y"]
-                item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+                offset_x, offset_y = self._layer_offsets(
+                    self.current_preset,
+                    layer,
+                    layer_state,
+                    pixmap.width(),
+                    pixmap.height(),
+                )
+                item.setOffset(offset_x, offset_y)
                 item.setPos(pos_x, pos_y)
         preset_visual_state = self._layer_state(self.current_preset, PRESET_VISUAL_LAYER_ID)
         preset_visual_pixmap = self._preset_visual_preview_pixmap(self.current_preset, canvas_w, canvas_h)
@@ -6117,6 +6148,7 @@ class ARPlusWindow(QMainWindow):
         source_w, source_h = PRESETS[source_preset_id]["size"]
         preset_label = PRESETS[source_preset_id]["label"]
         target_w, target_h = target_size
+        self._enforce_logo_preset_layout(source_preset_id)
         scale = max(0.02, min(1.0, float(render_scale)))
         canvas_w = max(1, int(round(target_w * scale)))
         canvas_h = max(1, int(round(target_h * scale)))
@@ -6192,11 +6224,15 @@ class ARPlusWindow(QMainWindow):
                     x = int(tx - bbox_left)
                     y = int(ty - bbox_bottom)
                 else:
-                    x = int(tx - lw / 2)
-                    y = int(ty - lh / 2)
-                if layer in CHARACTER_LAYERS:
-                    x = int(tx - lw / 2)
-                    y = int(ty - lh)
+                    offset_x, offset_y = self._layer_offsets(
+                        source_preset_id,
+                        layer,
+                        layer_state,
+                        lw,
+                        lh,
+                    )
+                    x = int(tx + offset_x)
+                    y = int(ty + offset_y)
 
             if log_upscale and self.assets[layer].pil and layer not in {"logo", "gradient"}:
                 sw, sh = self.assets[layer].pil.size
@@ -6857,6 +6893,10 @@ class ARPlusWindow(QMainWindow):
         base_ratio = min(canvas_w / src_w, canvas_h / src_h)
         if base_ratio <= 0:
             return False
+        layer_state = self._layer_state(preset_id, layer_id)
+        layer_state["fit_mode"] = "contain"
+        target_center_x = box_x + (box_w * 0.5)
+        target_center_y = box_y + (box_h * 0.5)
         if layer_id in CHARACTER_LAYERS:
             target_height = max(1.0, canvas_h - box_y)
             loaded_layers = self._loaded_character_layers()
@@ -6958,34 +6998,22 @@ class ARPlusWindow(QMainWindow):
             layer_state["transform"]["y"] = canvas_h + bottom_gap
             return True
 
-        layer_state = self._layer_state(preset_id, layer_id)
-        if layer_id == "logo":
-            target_total_ratio = min(box_w / visible_w, box_h / visible_h)
-            target_scale = max(0.01, target_total_ratio / base_ratio)
-            visible_center_offset_x = (
-                (((visible_left + visible_right) * 0.5) - (src_w * 0.5))
-                * base_ratio
-                * target_scale
-            )
-            visible_center_offset_y = (
-                (((visible_top + visible_bottom) * 0.5) - (src_h * 0.5))
-                * base_ratio
-                * target_scale
-            )
-            layer_state["fit_mode"] = "contain"
-            layer_state["transform"]["anchor"] = "center"
-            layer_state["transform"]["scale"] = target_scale
-            layer_state["transform"]["x"] = (box_x + (box_w * 0.5)) - visible_center_offset_x
-            layer_state["transform"]["y"] = (box_y + (box_h * 0.5)) - visible_center_offset_y
-            return True
-
-        region_ratio = min(box_w / src_w, box_h / src_h)
-        layer_state["fit_mode"] = "contain"
-        layer_state["transform"]["x"] = box_x + (box_w * 0.5)
-        target_scale = max(0.01, region_ratio / base_ratio)
+        target_total_ratio = min(box_w / visible_w, box_h / visible_h)
+        target_scale = max(0.01, target_total_ratio / base_ratio)
+        visible_center_offset_x = (
+            (((visible_left + visible_right) * 0.5) - (src_w * 0.5))
+            * base_ratio
+            * target_scale
+        )
+        visible_center_offset_y = (
+            (((visible_top + visible_bottom) * 0.5) - (src_h * 0.5))
+            * base_ratio
+            * target_scale
+        )
         layer_state["transform"]["anchor"] = "center"
         layer_state["transform"]["scale"] = target_scale
-        layer_state["transform"]["y"] = box_y + (box_h * 0.5)
+        layer_state["transform"]["x"] = target_center_x - visible_center_offset_x
+        layer_state["transform"]["y"] = target_center_y - visible_center_offset_y
         return True
 
     def _snapshot_file_name(self, base_name: str | None = None) -> str:

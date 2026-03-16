@@ -1,0 +1,721 @@
+{
+  "schema_version": 1,
+  "saved_at": "2026-02-18T20:37:37",
+  "program_root": "D:\\CODE\\ARplus-WebKitV2",
+  "current_preset": "poster",
+  "base_name": "Name",
+  "selected_exports": [
+    "poster",
+    "fullscreen",
+    "hero",
+    "logo",
+    "background",
+    "background_no_logo"
+  ],
+  "assets": {
+    "background": {
+      "path": "",
+      "loaded": false
+    },
+    "character": {
+      "path": "D:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/02-PERSONNAGE/Aurélie_Detoure.png",
+      "loaded": true
+    },
+    "character2": {
+      "path": "",
+      "loaded": false
+    },
+    "character3": {
+      "path": "",
+      "loaded": false
+    },
+    "character4": {
+      "path": "",
+      "loaded": false
+    },
+    "gradient": {
+      "path": "",
+      "loaded": false
+    },
+    "logo": {
+      "path": "",
+      "loaded": false
+    },
+    "fx": {
+      "path": "",
+      "loaded": false
+    }
+  },
+  "logo_text": {
+    "enabled": false,
+    "text": "",
+    "size": 300,
+    "align": "center",
+    "force_upper": true,
+    "line_spacing": 100,
+    "color": "#FFFFFF"
+  },
+  "poster_textbox": {
+    "enabled": true,
+    "text": "TEXTE BOX"
+  },
+  "logo_shadow": {
+    "enabled": false,
+    "distance": 5,
+    "blur": 5,
+    "angle": 135,
+    "opacity": 60,
+    "color": "#000000"
+  },
+  "gradient": {
+    "poster": {
+      "enabled": false,
+      "mode": "single",
+      "direction": "top",
+      "color_a": "#000000",
+      "color_b": "#FFFFFF",
+      "distance": 40,
+      "stretch": 100
+    },
+    "fullscreen": {
+      "enabled": false,
+      "mode": "single",
+      "direction": "top",
+      "color_a": "#000000",
+      "color_b": "#FFFFFF",
+      "distance": 40,
+      "stretch": 100
+    },
+    "hero": {
+      "enabled": false,
+      "mode": "single",
+      "direction": "top",
+      "color_a": "#000000",
+      "color_b": "#FFFFFF",
+      "distance": 40,
+      "stretch": 100
+    },
+    "logo": {
+      "enabled": false,
+      "mode": "single",
+      "direction": "top",
+      "color_a": "#000000",
+      "color_b": "#FFFFFF",
+      "distance": 40,
+      "stretch": 100
+    },
+    "background": {
+      "enabled": false,
+      "mode": "single",
+      "direction": "top",
+      "color_a": "#000000",
+      "color_b": "#FFFFFF",
+      "distance": 40,
+      "stretch": 100
+    },
+    "background_no_logo": {
+      "enabled": false,
+      "mode": "single",
+      "direction": "top",
+      "color_a": "#000000",
+      "color_b": "#FFFFFF",
+      "distance": 40,
+      "stretch": 100
+    }
+  },
+  "guides": {
+    "visible": true,
+    "opacity": 0.25,
+    "poster_variant": "1"
+  },
+  "state": {
+    "poster": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 733.8026214340787,
+          "y": 2400.0,
+          "scale": 1.02,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character2": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character3": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character4": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "gradient": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "stretch",
+        "transform": {
+          "x": 800.0,
+          "y": 1200.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 800.0,
+          "y": 1200.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "fullscreen": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 2637.809367771781,
+          "y": 875.9999999999999,
+          "scale": 1.1380319177026013,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character2": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character3": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character4": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "gradient": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "stretch",
+        "transform": {
+          "x": 1740.0,
+          "y": 438.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1740.0,
+          "y": 438.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "hero": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1619.4400539707017,
+          "y": 672.0,
+          "scale": 1.1255369534089656,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character2": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character3": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character4": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "gradient": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "stretch",
+        "transform": {
+          "x": 1120.0,
+          "y": 336.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1120.0,
+          "y": 336.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "logo": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 400.0,
+          "y": 300.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character2": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character3": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character4": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "gradient": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "stretch",
+        "transform": {
+          "x": 400.0,
+          "y": 150.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 400.0,
+          "y": 150.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "background": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 2766.55300693909,
+          "y": 2160.0,
+          "scale": 1.0569262400411206,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character2": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character3": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character4": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "gradient": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "stretch",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    },
+    "background_no_logo": {
+      "background": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "crop",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "character": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 2674.2132806476484,
+          "y": 2160.0,
+          "scale": 0.8486464490705046,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character2": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character3": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "character4": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "bottom"
+        }
+      },
+      "gradient": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "stretch",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "logo": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      },
+      "fx": {
+        "visible": true,
+        "opacity": 1.0,
+        "fit_mode": "contain",
+        "transform": {
+          "x": 0.0,
+          "y": 0.0,
+          "scale": 1.0,
+          "rotation": 0.0,
+          "anchor": "center"
+        }
+      }
+    }
+  }
+}

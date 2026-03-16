@@ -5,7 +5,7 @@ a = Analysis(
     ['ARPlus.py'],
     pathex=[],
     binaries=[],
-    datas=[('asset', 'asset')],
+    datas=[('asset', 'asset'), ('data', 'data')],
     hiddenimports=['PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets'],
     hookspath=[],
     hooksconfig={},
@@ -19,9 +19,11 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name='ARPlus',
+    exclude_binaries=False,
+    name='KitReplay-AR+',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -33,13 +35,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['asset\\logo\\arplus.ico'],
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='ARPlus',
 )
