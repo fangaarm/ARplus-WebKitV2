@@ -1,0 +1,19 @@
+{
+  "id": "",
+  "title": "LesLiaisonsDuPéché",
+  "exports": {
+    "poster": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\POSTER-LesLiaisonsDuPéché.jpg",
+    "poster-nologo": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\poster-nologo-LesLiaisonsDuPéché.jpg",
+    "top-1": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\TOP-1-LesLiaisonsDuPéché-2026-03-16.jpg",
+    "top-2": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\TOP-2-LesLiaisonsDuPéché-2026-03-16.jpg",
+    "top-3": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\TOP-3-LesLiaisonsDuPéché-2026-03-16.jpg",
+    "top-4": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\TOP-4-LesLiaisonsDuPéché-2026-03-16.jpg",
+    "top-5": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\TOP-5-LesLiaisonsDuPéché-2026-03-16.jpg",
+    "full-screen": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\full-screen-3480x876-LesLiaisonsDuPéché.jpg",
+    "hero-banner": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\hero-banner-2240x672-LesLiaisonsDuPéché.jpg",
+    "banner": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\banner-3840x1152-LesLiaisonsDuPéché.jpg",
+    "logo": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\logo-800x300-LesLiaisonsDuPéché.png",
+    "background": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\background-3840x2160-LesLiaisonsDuPéché.jpg",
+    "background-no-logo": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\dist\\ARPlus\\exports\\LesLiaisonsDuPéché\\background-no-logo-3840x2160-LesLiaisonsDuPéché.jpg"
+  }
+}
