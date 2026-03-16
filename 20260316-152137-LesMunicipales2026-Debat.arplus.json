@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "saved_at": "2026-03-16T11:20:11",
+  "saved_at": "2026-03-16T15:21:43",
   "program_root": "D:\\CODE_SCRIPT\\ARplus-WebKitV2",
   "current_preset": "poster",
   "export_id": "",
   "export_dir": "D:\\CODE_SCRIPT\\ARplus-WebKitV2\\exports",
-  "base_name": "",
+  "base_name": "LesMunicipales2026-Debat",
   "selected_exports": [
     "poster",
     "poster_no_logo",
@@ -22,16 +22,16 @@
   ],
   "assets": {
     "background": {
-      "path": "",
-      "loaded": false
+      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/AUTRES/municipales 2026/BackgroundFullscale.png",
+      "loaded": true
     },
     "character": {
-      "path": "",
-      "loaded": false
+      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/AUTRES/municipales 2026/AntoineHassler.png",
+      "loaded": true
     },
     "character2": {
-      "path": "",
-      "loaded": false
+      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/AUTRES/municipales 2026/MaevaPausé.png",
+      "loaded": true
     },
     "character3": {
       "path": "",
@@ -46,8 +46,8 @@
       "loaded": false
     },
     "logo": {
-      "path": "H:/Projet en cours/AR_BA_WEB/AR SITE 2025/03-ASSETS/01-LOGO/Texture_52MinutesActu-Logo_V1.png",
-      "loaded": true
+      "path": "",
+      "loaded": false
     },
     "fx": {
       "path": "",
@@ -264,7 +264,7 @@
     }
   },
   "guides": {
-    "visible": false,
+    "visible": true,
     "opacity": 0.25,
     "poster_variant": "1"
   },
@@ -275,8 +275,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 1200.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -288,9 +288,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 1058.9924669647291,
+          "y": 2431.5151515151515,
+          "scale": 0.9,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -301,9 +301,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 467.3210312965723,
+          "y": 2429.090909090909,
+          "scale": 0.92,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -353,9 +353,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 715.2212948912494,
-          "y": 2146.0844714213454,
-          "scale": 0.8861911987860395,
+          "x": 800.0,
+          "y": 1200.0,
+          "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
           "flip_x": false
@@ -513,8 +513,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 1200.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -526,8 +526,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -539,8 +539,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -632,8 +632,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 1200.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -645,8 +645,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -658,8 +658,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -751,8 +751,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 1200.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -764,8 +764,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -777,8 +777,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -870,8 +870,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 1200.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -883,8 +883,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -896,8 +896,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -989,8 +989,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 1200.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1002,8 +1002,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -1015,8 +1015,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 800.0,
+          "y": 2400.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -1108,8 +1108,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 1740.0,
+          "y": 438.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1121,9 +1121,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 2495.0207792349725,
+          "y": 876.0,
+          "scale": 1.007634703196347,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1134,9 +1134,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 2831.083019672131,
+          "y": 876.0,
+          "scale": 1.0324126057339622,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1186,9 +1186,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 1719.736395214203,
-          "y": 130.91866074874565,
-          "scale": 0.55,
+          "x": 1740.0,
+          "y": 438.0,
+          "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
           "flip_x": false
@@ -1227,8 +1227,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 1120.0,
+          "y": 336.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1240,9 +1240,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 1511.1062524590163,
+          "y": 672.0,
+          "scale": 0.9965714285714286,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1253,9 +1253,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 1766.0769081967212,
+          "y": 672.0,
+          "scale": 1.0210772833723654,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1305,8 +1305,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 520.2078907435508,
-          "y": 321.608497723824,
+          "x": 1120.0,
+          "y": 336.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1346,8 +1346,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 400.0,
+          "y": 150.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1359,8 +1359,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 400.0,
+          "y": 300.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -1372,8 +1372,8 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 400.0,
+          "y": 300.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "bottom",
@@ -1424,11 +1424,11 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 300.0,
-          "scale": 2.19,
+          "x": 400.0,
+          "y": 300,
+          "scale": 1.3,
           "rotation": 0.0,
-          "anchor": "bottom_left_visible",
+          "anchor": "bottom",
           "flip_x": false
         }
       },
@@ -1465,8 +1465,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 1920.0,
+          "y": 1080.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1478,9 +1478,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 2440.0638262295083,
+          "y": 2160.0,
+          "scale": 0.9358222222222222,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1491,9 +1491,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 3209.654154098361,
+          "y": 2160.0,
+          "scale": 0.9588342440801457,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1543,9 +1543,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 1005.788315629742,
-          "y": 681.464339908953,
-          "scale": 0.65,
+          "x": 1920.0,
+          "y": 1080.0,
+          "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
           "flip_x": false
@@ -1584,8 +1584,8 @@
         "opacity": 1.0,
         "fit_mode": "crop",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 1920.0,
+          "y": 1080.0,
           "scale": 1.0,
           "rotation": 0.0,
           "anchor": "center",
@@ -1597,9 +1597,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 2411.6611775956285,
+          "y": 2160.0,
+          "scale": 0.7514074074074074,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false
@@ -1610,9 +1610,9 @@
         "opacity": 1.0,
         "fit_mode": "contain",
         "transform": {
-          "x": 0.0,
-          "y": 0.0,
-          "scale": 1.0,
+          "x": 3029.5946475409837,
+          "y": 2160.0,
+          "scale": 0.7698846387370978,
           "rotation": 0.0,
           "anchor": "bottom",
           "flip_x": false

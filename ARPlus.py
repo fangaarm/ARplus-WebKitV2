@@ -20,7 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, Tuple
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
-from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, QRectF, Qt, QLoggingCategory, QUrl, Signal, QTimer
+from PySide6.QtCore import QBuffer, QIODevice, QObject, QPointF, QRectF, QSize, Qt, QLoggingCategory, QUrl, Signal, QTimer
 from PySide6.QtGui import QBitmap, QBrush, QColor, QDesktopServices, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QRegion, QShortcut, QTransform
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QStyle,
     QTabWidget,
     QSizePolicy,
     QVBoxLayout,
@@ -1444,10 +1445,12 @@ class TopArPanel(QWidget):
         )
 
     def fit_view(self):
+        self.view.resetTransform()
         self.view.fitInView(
             QRectF(0, 0, TOP_CANVAS_SIZE[0], TOP_CANVAS_SIZE[1]),
             Qt.AspectRatioMode.KeepAspectRatio,
         )
+        self.view.centerOn(QRectF(0, 0, TOP_CANVAS_SIZE[0], TOP_CANVAS_SIZE[1]).center())
 
     def export_to_jpeg(self, out_path: Path) -> bool:
         image = QImage(TOP_CANVAS_SIZE[0], TOP_CANVAS_SIZE[1], QImage.Format.Format_RGB32)
@@ -1525,6 +1528,12 @@ class TopArPanel(QWidget):
         self.refresh_controls()
         self.refresh_preview()
 
+    def apply_theme(self):
+        tokens = self.owner._theme_tokens()
+        self.view.setBackgroundBrush(QColor(tokens["preview_outer_bg"]))
+        self.info.setStyleSheet(f"color: {tokens['muted_text']};")
+        self.info_bar.setStyleSheet(f"color: {tokens['muted_text']}; font-size: 12px;")
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
 
@@ -1581,10 +1590,19 @@ class TopArWorkspace(QWidget):
         if panel is not None:
             panel.refresh_from_owner()
 
+    def fit_current_panel_view(self):
+        panel = self.panels.get(self.current_preset_id())
+        if panel is not None:
+            panel.fit_view()
+
     def refresh_after_owner_change(self):
         self.refresh_from_owner()
         for panel in self.panels.values():
             panel.refresh_preview()
+
+    def apply_theme(self):
+        for panel in self.panels.values():
+            panel.apply_theme()
 
 class ARPlusWindow(QMainWindow):
     def __init__(self):
@@ -1614,6 +1632,7 @@ class ARPlusWindow(QMainWindow):
         self.logo_shadow_angle = 135
         self.logo_shadow_opacity = 60
         self.logo_shadow_color = "#000000"
+        self.theme_mode = "dark"
         self.gradient_settings = {
             preset_id: self._default_gradient_config() for preset_id in PRESETS
         }
@@ -1633,13 +1652,15 @@ class ARPlusWindow(QMainWindow):
         self.upscale_warning_ratio = 1.75
         self.presets_preview_interval_ms = 2400
         self.presets_preview_worker_interval_ms = 12
-        self.presets_preview_box_width = 300
-        self.presets_preview_box_height = 170
+        self.presets_preview_box_width = 225
+        self.presets_preview_box_height = 128
         self.presets_preview_quality_scale = 0.65
         self.live_refresh_interval_ms = 70
         self.layer_move_preview_interval_ms = 180
+        self.preview_feedback_interval_ms = 120
         self.live_refresh_pending = False
         self.layer_move_refresh_pending = False
+        self.preview_layout_issue_detected = False
         self.current_preset = "poster"
         self.active_layer = "background"
         self.updating_ui = False
@@ -1655,6 +1676,9 @@ class ARPlusWindow(QMainWindow):
         self.undo_stack: list[dict] = []
         self.undo_limit = 40
         self.undo_in_progress = False
+        self.import_toolbar_buttons: list[QPushButton] = []
+        self.import_toolbar_separators: list[QFrame] = []
+        self.sidebar_action_buttons: list[QPushButton] = []
         self.guide_pixmaps: Dict[str, QPixmap] = {}
         self.guide_regions: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {}
         self.dafont_themes_cache: list[DaFontTheme] | None = None
@@ -1692,6 +1716,9 @@ class ARPlusWindow(QMainWindow):
         self.layer_move_preview_timer = QTimer(self)
         self.layer_move_preview_timer.setSingleShot(True)
         self.layer_move_preview_timer.timeout.connect(self._flush_layer_move_preview_refresh)
+        self.preview_feedback_timer = QTimer(self)
+        self.preview_feedback_timer.setSingleShot(True)
+        self.preview_feedback_timer.timeout.connect(self._update_preview_canvas_feedback)
 
         self.scene = QGraphicsScene(self)
         self.view = CanvasView(self)
@@ -1775,6 +1802,7 @@ class ARPlusWindow(QMainWindow):
         self._load_guides()
         self._set_scene_for_preset(self.current_preset)
         self._refresh_preview()
+        self._apply_theme()
 
     def _build_default_layer(self):
         return {
@@ -1974,18 +2002,17 @@ class ARPlusWindow(QMainWindow):
         if not isinstance(payload, dict):
             return
         raw_recent_dirs = payload.get("recent_dirs")
-        if not isinstance(raw_recent_dirs, dict):
-            return
         for key, fallback in self._default_recent_dirs().items():
-            value = raw_recent_dirs.get(key)
-            if isinstance(value, str) and value.strip():
-                self.recent_dirs[key] = value.strip()
-            else:
-                self.recent_dirs[key] = fallback
+            value = raw_recent_dirs.get(key) if isinstance(raw_recent_dirs, dict) else None
+            self.recent_dirs[key] = value.strip() if isinstance(value, str) and value.strip() else fallback
+        raw_theme_mode = str(payload.get("theme_mode", self.theme_mode)).strip().lower()
+        if raw_theme_mode in {"dark", "light"}:
+            self.theme_mode = raw_theme_mode
 
     def _save_ui_state(self):
         payload = {
             "recent_dirs": self.recent_dirs,
+            "theme_mode": self.theme_mode,
         }
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -1995,6 +2022,354 @@ class ARPlusWindow(QMainWindow):
             )
         except Exception:
             return
+
+    def _theme_tokens(self) -> dict[str, str]:
+        if self.theme_mode == "light":
+            return {
+                "window_bg": "#ECE9EF",
+                "panel_bg": "#F7F5F8",
+                "panel_alt_bg": "#FFFFFF",
+                "input_bg": "#FFFFFF",
+                "border": "#C9C3CD",
+                "text": "#232129",
+                "muted_text": "#5D5A65",
+                "button_bg": "#F0EDF3",
+                "button_hover": "#E8E3EC",
+                "button_pressed": "#DED7E1",
+                "accent": "#0B5FA6",
+                "accent_hover": "#1374C7",
+                "accent_pressed": "#084A82",
+                "accent_border": "#084A82",
+                "preview_outer_bg": "#D8D5DB",
+                "preview_canvas_bg": "#E4E1E6",
+                "preview_warning_bg": "#F0D5D9",
+                "preview_card_bg": "#F1EEF4",
+                "tab_bg": "#E6E1EA",
+            }
+        return {
+            "window_bg": "#1E1E22",
+            "panel_bg": "#24242A",
+            "panel_alt_bg": "#2C2C33",
+            "input_bg": "#33343B",
+            "border": "#4A4A52",
+            "text": "#F2F2F2",
+            "muted_text": "#A7A7B0",
+            "button_bg": "#303038",
+            "button_hover": "#3A3A44",
+            "button_pressed": "#26262E",
+            "accent": "#0B5FA6",
+            "accent_hover": "#1374C7",
+            "accent_pressed": "#084A82",
+            "accent_border": "#084A82",
+            "preview_outer_bg": "#D7D3D9",
+            "preview_canvas_bg": "#E1DDE3",
+            "preview_warning_bg": "#EBCFD4",
+            "preview_card_bg": "#1F1F24",
+            "tab_bg": "#2B2B32",
+        }
+
+    def _app_stylesheet(self) -> str:
+        tokens = self._theme_tokens()
+        return f"""
+        QMainWindow, QWidget {{
+            background-color: {tokens['window_bg']};
+            color: {tokens['text']};
+        }}
+        QLabel {{
+            color: {tokens['text']};
+            background: transparent;
+        }}
+        QGroupBox {{
+            background-color: {tokens['panel_bg']};
+            border: 1px solid {tokens['border']};
+            border-radius: 10px;
+            margin-top: 12px;
+            padding-top: 10px;
+            font-weight: 600;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+            color: {tokens['text']};
+        }}
+        QLineEdit, QPlainTextEdit, QComboBox, QListWidget, QSpinBox {{
+            background-color: {tokens['input_bg']};
+            color: {tokens['text']};
+            border: 1px solid {tokens['border']};
+            border-radius: 6px;
+            padding: 6px;
+            selection-background-color: {tokens['accent']};
+        }}
+        QScrollArea {{
+            border: 0;
+            background: transparent;
+        }}
+        QTabWidget::pane {{
+            border: 1px solid {tokens['border']};
+            background: {tokens['panel_bg']};
+            border-radius: 10px;
+        }}
+        QTabBar::tab {{
+            background: {tokens['tab_bg']};
+            color: {tokens['text']};
+            border: 1px solid {tokens['border']};
+            border-bottom: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            padding: 8px 12px;
+            min-width: 90px;
+        }}
+        QTabBar::tab:selected {{
+            background: {tokens['accent']};
+            color: white;
+        }}
+        QTabBar::tab:!selected {{
+            margin-top: 2px;
+        }}
+        QPushButton {{
+            background-color: {tokens['button_bg']};
+            color: {tokens['text']};
+            border: 1px solid {tokens['border']};
+            border-radius: 8px;
+            padding: 8px 12px;
+        }}
+        QPushButton:hover {{
+            background-color: {tokens['button_hover']};
+        }}
+        QPushButton:pressed {{
+            background-color: {tokens['button_pressed']};
+        }}
+        QPushButton:disabled {{
+            color: {tokens['muted_text']};
+        }}
+        QProgressBar {{
+            border: 1px solid {tokens['border']};
+            border-radius: 8px;
+            background: {tokens['panel_alt_bg']};
+            text-align: center;
+        }}
+        QProgressBar::chunk {{
+            background-color: {tokens['accent']};
+            border-radius: 8px;
+        }}
+        """
+
+    def _primary_button_stylesheet(self, overlay: bool = False) -> str:
+        tokens = self._theme_tokens()
+        accent = tokens["accent"]
+        accent_hover = tokens["accent_hover"]
+        accent_pressed = tokens["accent_pressed"]
+        accent_border = tokens["accent_border"]
+        if overlay:
+            return f"""
+            QPushButton {{
+                background-color: rgba(11, 95, 166, 230);
+                color: white;
+                border: 1px solid {accent_border};
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 12px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(19, 116, 199, 235);
+            }}
+            QPushButton:pressed {{
+                background-color: rgba(8, 74, 130, 240);
+            }}
+            """
+        return f"""
+        QPushButton {{
+            background-color: {accent};
+            color: white;
+            border: 1px solid {accent_border};
+            border-radius: 8px;
+            font-weight: 600;
+            padding: 8px 12px;
+        }}
+        QPushButton:hover {{
+            background-color: {accent_hover};
+        }}
+        QPushButton:pressed {{
+            background-color: {accent_pressed};
+        }}
+        """
+
+    def _sidebar_action_button_stylesheet(self, primary: bool = False) -> str:
+        tokens = self._theme_tokens()
+        if primary:
+            base_bg = tokens["accent"]
+            hover_bg = tokens["accent_hover"]
+            pressed_bg = tokens["accent_pressed"]
+            border_color = tokens["accent_border"]
+            text_color = "#FFFFFF"
+        else:
+            base_bg = tokens["button_bg"]
+            hover_bg = tokens["button_hover"]
+            pressed_bg = tokens["button_pressed"]
+            border_color = tokens["border"]
+            text_color = tokens["text"]
+        return f"""
+        QPushButton {{
+            background-color: {base_bg};
+            color: {text_color};
+            border: 1px solid {border_color};
+            border-radius: 8px;
+            font-weight: 600;
+            text-align: left;
+            padding: 8px 12px;
+            padding-left: 14px;
+        }}
+        QPushButton:hover {{
+            background-color: {hover_bg};
+        }}
+        QPushButton:pressed {{
+            background-color: {pressed_bg};
+        }}
+        """
+
+    def _theme_icon(self, mode: str) -> QIcon:
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if mode == "light":
+            painter.setBrush(QColor("#F6C945"))
+            painter.setPen(QPen(QColor("#D79F10"), 1))
+            painter.drawEllipse(2, 2, 14, 14)
+        else:
+            painter.setBrush(QColor("#263042"))
+            painter.setPen(QPen(QColor("#8FA5C9"), 1))
+            painter.drawEllipse(2, 2, 14, 14)
+            painter.setBrush(QColor("#ECE9EF"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(7, 2, 9, 14)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _apply_action_button_icons(self):
+        style = self.style()
+        if hasattr(self, "export_dir_btn"):
+            self.export_dir_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        if hasattr(self, "open_export_dir_btn"):
+            self.open_export_dir_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        if hasattr(self, "load_project_btn"):
+            self.load_project_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
+        if hasattr(self, "save_project_btn"):
+            self.save_project_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        if hasattr(self, "new_project_btn"):
+            self.new_project_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+        if hasattr(self, "export_all_btn"):
+            self.export_all_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        if hasattr(self, "export_none_btn"):
+            self.export_none_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+        if hasattr(self, "export_btn"):
+            self.export_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
+        for button in self.sidebar_action_buttons:
+            button.setIconSize(QSize(16, 16))
+            button.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+    def _preset_preview_stylesheet(self, border_color: str) -> str:
+        tokens = self._theme_tokens()
+        return (
+            f"border: 2px solid {border_color};"
+            f"background-color: {tokens['preview_card_bg']};"
+            "border-radius: 8px;"
+        )
+
+    def _apply_theme(self):
+        self.setStyleSheet(self._app_stylesheet())
+        for button in self.import_toolbar_buttons:
+            button.setStyleSheet(self._primary_button_stylesheet())
+        for button in self.sidebar_action_buttons:
+            button.setStyleSheet(self._sidebar_action_button_stylesheet(primary=button is getattr(self, "export_btn", None)))
+        if hasattr(self, "preset_visual_import_btn"):
+            self.preset_visual_import_btn.setStyleSheet(self._primary_button_stylesheet(overlay=True))
+        tokens = self._theme_tokens()
+        for separator in self.import_toolbar_separators:
+            separator.setStyleSheet(
+                f"color: {tokens['border']}; background-color: {tokens['border']};"
+            )
+        self._apply_action_button_icons()
+        if hasattr(self, "top_workspace"):
+            self.top_workspace.apply_theme()
+        self._schedule_preview_canvas_feedback(immediate=True)
+        self._refresh_presets_preview_borders()
+
+    def _preview_export_id_for_preset(self, preset_id: str | None = None) -> str | None:
+        if preset_id is None:
+            preset_id = self.current_preset
+        for export_id, meta in EXPORT_TARGETS.items():
+            if meta.get("source_preset") == preset_id:
+                return export_id
+        return None
+
+    def _preview_layout_issue_for_preset(self, preset_id: str | None = None) -> bool:
+        if preset_id is None:
+            preset_id = self.current_preset
+        if self._is_top_preset(preset_id) or preset_id == "logo":
+            return False
+        export_id = self._preview_export_id_for_preset(preset_id)
+        if export_id is None or export_id not in TRANSPARENCY_VALIDATE_EXPORTS:
+            return False
+
+        source_preset_id, target_size = self._export_validation_source(export_id)
+        _target_w, target_h = target_size
+        tolerance = 2.0
+
+        if self._is_layer_allowed(source_preset_id, "background"):
+            background_bbox = self._layer_export_content_bbox(source_preset_id, "background", target_size)
+            preset_visual_bbox = self._layer_export_content_bbox(
+                source_preset_id,
+                PRESET_VISUAL_LAYER_ID,
+                target_size,
+            )
+            has_valid_background_source = background_bbox is not None or preset_visual_bbox is not None
+            if not has_valid_background_source:
+                return True
+            background_fills = self._bbox_fills_target(background_bbox, target_size, tolerance)
+            preset_visual_fills = self._bbox_fills_target(preset_visual_bbox, target_size, tolerance)
+            if not background_fills and not preset_visual_fills:
+                return True
+
+        for layer_id in CHARACTER_LAYERS:
+            if not self._is_layer_allowed(source_preset_id, layer_id):
+                continue
+            if not self._layer_has_loaded_asset(layer_id, source_preset_id):
+                continue
+            layer_state = self._layer_state(source_preset_id, layer_id)
+            if not layer_state["visible"]:
+                continue
+            character_bbox = self._layer_export_content_bbox(source_preset_id, layer_id, target_size)
+            if character_bbox is None:
+                continue
+            if character_bbox[3] < (target_h - tolerance):
+                return True
+        return False
+
+    def _apply_preview_canvas_feedback(self, issue_detected: bool):
+        tokens = self._theme_tokens()
+        if hasattr(self, "view"):
+            self.view.setBackgroundBrush(QColor(tokens["preview_outer_bg"]))
+        if hasattr(self, "clip_item"):
+            fill_color = tokens["preview_warning_bg"] if issue_detected else tokens["preview_canvas_bg"]
+            self.clip_item.setBrush(QColor(fill_color))
+
+    def _schedule_preview_canvas_feedback(self, immediate: bool = False):
+        if not hasattr(self, "preview_feedback_timer"):
+            self._update_preview_canvas_feedback()
+            return
+        self.preview_feedback_timer.stop()
+        self.preview_feedback_timer.start(0 if immediate else self.preview_feedback_interval_ms)
+
+    def _update_preview_canvas_feedback(self):
+        issue_detected = False
+        try:
+            issue_detected = self._preview_layout_issue_for_preset(self.current_preset)
+        except Exception:
+            issue_detected = False
+        self.preview_layout_issue_detected = issue_detected
+        self._apply_preview_canvas_feedback(issue_detected)
 
     def _load_dafont_health_status(self):
         if not self.dafont_health_path.exists():
@@ -3458,6 +3833,22 @@ class ARPlusWindow(QMainWindow):
         self.main_tabs = QTabWidget()
         layout.addWidget(self.main_tabs, 1)
 
+        self.metadata_id_input = QLineEdit()
+        self.metadata_id_input.setPlaceholderText("Numero ID")
+        self.metadata_id_input.setMaximumWidth(180)
+        self.base_name_input = QLineEdit()
+        self.base_name_input.setPlaceholderText("Projet")
+        self.base_name_input.setMinimumWidth(240)
+        self.base_name_input.setMaximumWidth(320)
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem(self._theme_icon("dark"), "Sombre", "dark")
+        self.theme_combo.addItem(self._theme_icon("light"), "Clair", "light")
+        theme_index = self.theme_combo.findData(self.theme_mode)
+        if theme_index >= 0:
+            self.theme_combo.setCurrentIndex(theme_index)
+        self.theme_combo.setMaximumWidth(120)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+
         arplus_tab = QWidget()
         arplus_layout = QVBoxLayout(arplus_tab)
         top_layout = QHBoxLayout()
@@ -3475,14 +3866,21 @@ class ARPlusWindow(QMainWindow):
         center.setSpacing(8)
         center.addWidget(self._build_import_toolbar())
         top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("ID"))
+        top_row.addWidget(self.metadata_id_input)
+        top_row.addWidget(QLabel("Nom du projet"))
+        top_row.addWidget(self.base_name_input)
+        top_row.addStretch(1)
         top_row.addWidget(QLabel("Gabarit en apercu:"))
         self.preset_combo = QComboBox()
         for preset_id in ARPLUS_VISIBLE_PRESET_IDS:
             meta = PRESETS[preset_id]
             self.preset_combo.addItem(f"{meta['label']} ({meta['size'][0]}x{meta['size'][1]})", preset_id)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        self.preset_combo.setMinimumWidth(240)
         top_row.addWidget(self.preset_combo)
-        top_row.addStretch(1)
+        top_row.addWidget(QLabel("Habillage"))
+        top_row.addWidget(self.theme_combo)
         center.addLayout(top_row)
         center.addWidget(self.view, 1)
         top_layout.addLayout(center, 3)
@@ -3510,24 +3908,7 @@ class ARPlusWindow(QMainWindow):
         self.preset_visual_import_btn.clicked.connect(self._import_current_preset_visual)
         self.preset_visual_import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.preset_visual_import_btn.setMinimumHeight(34)
-        self.preset_visual_import_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: rgba(11, 95, 166, 230);
-                color: white;
-                border: 1px solid #084A82;
-                border-radius: 8px;
-                font-weight: 600;
-                padding: 8px 12px;
-            }
-            QPushButton:hover {
-                background-color: rgba(19, 116, 199, 235);
-            }
-            QPushButton:pressed {
-                background-color: rgba(8, 74, 130, 240);
-            }
-            """
-        )
+        self.preset_visual_import_btn.setStyleSheet(self._primary_button_stylesheet(overlay=True))
         self.preset_visual_import_btn.hide()
         self._update_floating_preview_controls()
 
@@ -3536,7 +3917,18 @@ class ARPlusWindow(QMainWindow):
             return
         if self.main_tabs.widget(index) is self.top_workspace:
             self.top_workspace.refresh_after_owner_change()
+            QTimer.singleShot(0, self.top_workspace.fit_current_panel_view)
         self._update_floating_preview_controls()
+
+    def _on_theme_changed(self):
+        if not hasattr(self, "theme_combo"):
+            return
+        selected_mode = str(self.theme_combo.currentData() or self.theme_mode).strip().lower()
+        if selected_mode not in {"dark", "light"} or selected_mode == self.theme_mode:
+            return
+        self.theme_mode = selected_mode
+        self._save_ui_state()
+        self._apply_theme()
 
     def warmup_workspace_cache(self):
         self._refresh_preview()
@@ -4015,24 +4407,8 @@ class ARPlusWindow(QMainWindow):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         if tooltip:
             btn.setToolTip(tooltip)
-        btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #0B5FA6;
-                color: white;
-                border: 1px solid #084A82;
-                border-radius: 8px;
-                font-weight: 600;
-                padding: 8px 12px;
-            }
-            QPushButton:hover {
-                background-color: #1374C7;
-            }
-            QPushButton:pressed {
-                background-color: #084A82;
-            }
-            """
-        )
+        btn.setStyleSheet(self._primary_button_stylesheet())
+        self.import_toolbar_buttons.append(btn)
         return btn
 
     def _build_import_toolbar_separator(self):
@@ -4041,8 +4417,12 @@ class ARPlusWindow(QMainWindow):
         separator.setFrameShadow(QFrame.Shadow.Plain)
         separator.setLineWidth(1)
         separator.setMidLineWidth(0)
-        separator.setStyleSheet("color: #3A3A42; background-color: #3A3A42;")
+        tokens = self._theme_tokens()
+        separator.setStyleSheet(
+            f"color: {tokens['border']}; background-color: {tokens['border']};"
+        )
         separator.setFixedHeight(26)
+        self.import_toolbar_separators.append(separator)
         return separator
 
     def _build_import_toolbar(self):
@@ -4439,28 +4819,68 @@ class ARPlusWindow(QMainWindow):
         self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(100)
+        self.opacity_slider.sliderPressed.connect(self._push_undo_state)
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
         self.opacity_slider.sliderReleased.connect(self._refresh_preview_now)
-        self.opacity_value_label = QLabel("100")
-        self.opacity_value_label.setMinimumWidth(36)
+        self.opacity_spin = QSpinBox()
+        self.opacity_spin.setRange(0, 100)
+        self.opacity_spin.setValue(100)
+        self.opacity_spin.setSuffix(" %")
+        self.opacity_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+        self.opacity_spin.setMinimumWidth(82)
+        self.opacity_spin.valueChanged.connect(self.opacity_slider.setValue)
+        self.opacity_spin.editingFinished.connect(self._refresh_preview_now)
         opacity_row = QWidget()
         opacity_layout = QHBoxLayout(opacity_row)
         opacity_layout.setContentsMargins(0, 0, 0, 0)
+        opacity_layout.setSpacing(6)
+        self.opacity_slider.valueChanged.connect(self.opacity_spin.setValue)
         opacity_layout.addWidget(self.opacity_slider, 1)
-        opacity_layout.addWidget(self.opacity_value_label)
+        opacity_layout.addWidget(self.opacity_spin)
 
         self.scale_slider = QSlider(Qt.Orientation.Horizontal)
         self.scale_slider.setRange(0, 300)
         self.scale_slider.setValue(300)
+        self.scale_slider.sliderPressed.connect(self._push_undo_state)
         self.scale_slider.valueChanged.connect(self._on_scale_changed)
         self.scale_slider.sliderReleased.connect(self._refresh_preview_now)
-        self.scale_value_label = QLabel("300")
-        self.scale_value_label.setMinimumWidth(36)
+        self.scale_spin = QSpinBox()
+        self.scale_spin.setRange(0, 300)
+        self.scale_spin.setValue(300)
+        self.scale_spin.setSuffix(" %")
+        self.scale_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+        self.scale_spin.setMinimumWidth(82)
+        self.scale_spin.valueChanged.connect(self.scale_slider.setValue)
+        self.scale_spin.editingFinished.connect(self._refresh_preview_now)
         scale_row = QWidget()
         scale_layout = QHBoxLayout(scale_row)
         scale_layout.setContentsMargins(0, 0, 0, 0)
+        scale_layout.setSpacing(6)
+        self.scale_slider.valueChanged.connect(self.scale_spin.setValue)
         scale_layout.addWidget(self.scale_slider, 1)
-        scale_layout.addWidget(self.scale_value_label)
+        scale_layout.addWidget(self.scale_spin)
+
+        rotation_row = QWidget()
+        rotation_layout = QHBoxLayout(rotation_row)
+        rotation_layout.setContentsMargins(0, 0, 0, 0)
+        rotation_layout.setSpacing(6)
+        self.rotation_slider = QSlider(Qt.Orientation.Horizontal)
+        self.rotation_slider.setRange(-180, 180)
+        self.rotation_slider.setValue(0)
+        self.rotation_slider.sliderPressed.connect(self._push_undo_state)
+        self.rotation_slider.valueChanged.connect(self._on_rotation_changed)
+        self.rotation_slider.sliderReleased.connect(self._refresh_preview_now)
+        self.rotation_spin = QSpinBox()
+        self.rotation_spin.setRange(-180, 180)
+        self.rotation_spin.setValue(0)
+        self.rotation_spin.setSuffix(" deg")
+        self.rotation_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+        self.rotation_spin.setMinimumWidth(92)
+        self.rotation_spin.valueChanged.connect(self.rotation_slider.setValue)
+        self.rotation_spin.editingFinished.connect(self._refresh_preview_now)
+        self.rotation_slider.valueChanged.connect(self.rotation_spin.setValue)
+        rotation_layout.addWidget(self.rotation_slider, 1)
+        rotation_layout.addWidget(self.rotation_spin)
 
         self.flip_horizontal_btn = QPushButton("Miroir horizontal")
         self.flip_horizontal_btn.setCheckable(True)
@@ -4475,6 +4895,7 @@ class ARPlusWindow(QMainWindow):
         layer_layout.addRow(self.visible_check)
         layer_layout.addRow("Opacite", opacity_row)
         layer_layout.addRow("Echelle", scale_row)
+        layer_layout.addRow("Rotation", rotation_row)
         layer_layout.addRow(self.flip_horizontal_btn)
         layer_layout.addRow(self.center_layer_btn)
         layer_layout.addRow(self.reset_layer_btn)
@@ -4514,10 +4935,6 @@ class ARPlusWindow(QMainWindow):
         self.export_dir_btn.clicked.connect(self._select_export_dir)
         self.open_export_dir_btn = QPushButton("Ouvrir dossier export")
         self.open_export_dir_btn.clicked.connect(self._open_export_dir)
-        self.metadata_id_input = QLineEdit()
-        self.metadata_id_input.setPlaceholderText("Numero ID")
-        self.base_name_input = QLineEdit()
-        self.base_name_input.setPlaceholderText("Projet")
         self.load_project_btn = QPushButton("Importer projet...")
         self.load_project_btn.clicked.connect(self._load_project_snapshot_from_dialog)
         self.save_project_btn = QPushButton("Sauvegarde projet...")
@@ -4529,24 +4946,17 @@ class ARPlusWindow(QMainWindow):
         self.export_btn.clicked.connect(self._export_selected)
         self.export_btn.setMinimumHeight(38)
         self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.export_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #0B5FA6;
-                color: white;
-                border: 1px solid #084A82;
-                border-radius: 8px;
-                font-weight: 600;
-                padding: 8px 12px;
-            }
-            QPushButton:hover {
-                background-color: #1374C7;
-            }
-            QPushButton:pressed {
-                background-color: #084A82;
-            }
-            """
-        )
+        self.sidebar_action_buttons = [
+            self.export_dir_btn,
+            self.open_export_dir_btn,
+            self.load_project_btn,
+            self.save_project_btn,
+            self.new_project_btn,
+            self.export_btn,
+        ]
+        for button in self.sidebar_action_buttons:
+            button.setMinimumHeight(38)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.progress = QProgressBar()
 
@@ -4554,15 +4964,12 @@ class ARPlusWindow(QMainWindow):
         exports_layout.addWidget(self.export_dir)
         exports_layout.addWidget(self.export_dir_btn)
         exports_layout.addWidget(self.open_export_dir_btn)
-        exports_layout.addWidget(QLabel("ID"))
-        exports_layout.addWidget(self.metadata_id_input)
-        exports_layout.addWidget(QLabel("Nom du projet"))
-        exports_layout.addWidget(self.base_name_input)
         exports_layout.addWidget(self.load_project_btn)
         exports_layout.addWidget(self.save_project_btn)
         exports_layout.addWidget(self.new_project_btn)
         exports_layout.addWidget(self.export_btn)
         exports_layout.addWidget(self.progress)
+        self._apply_action_button_icons()
         return exports
 
     def _build_left_panel(self):
@@ -4611,7 +5018,7 @@ class ARPlusWindow(QMainWindow):
             thumb = PresetPreviewLabel(preset_id, "...")
             thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
             thumb.setFixedSize(self.presets_preview_box_width, self.presets_preview_box_height)
-            thumb.setStyleSheet("border: 1px solid #5E5E66; background-color: #1F1F24;")
+            thumb.setStyleSheet(self._preset_preview_stylesheet(self._theme_tokens()["border"]))
             thumb.clicked.connect(self._on_preset_preview_clicked)
             title = PresetPreviewLabel(preset_id, meta["label"])
             title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -4632,6 +5039,7 @@ class ARPlusWindow(QMainWindow):
         self.clip_item.setRect(0, 0, width, height)
         self.frame_item.setRect(0, 0, width, height)
         self._fit_view_to_scene()
+        self._schedule_preview_canvas_feedback(immediate=True)
         self._update_floating_preview_controls()
 
     def _fit_view_to_scene(self):
@@ -5032,8 +5440,12 @@ class ARPlusWindow(QMainWindow):
         snapped = int(round(numeric_value / 20.0) * 20)
         return max(-200, min(200, snapped))
 
+    def _logo_line_spacing_effective_offset(self) -> int:
+        # Keep the UI values readable while making the real spacing response stronger.
+        return self.logo_text_line_spacing * 2
+
     def _logo_line_spacing_ratio(self) -> float:
-        return max(0.1, min(3.0, 1.0 + (self.logo_text_line_spacing / 100.0)))
+        return max(0.1, min(5.0, 1.0 + (self._logo_line_spacing_effective_offset() / 100.0)))
 
     def _logo_preview_point_size(self) -> int:
         effective_size = self._logo_effective_size()
@@ -5087,32 +5499,6 @@ class ARPlusWindow(QMainWindow):
         if logo_asset is None or logo_asset.pixmap is None:
             return QPixmap()
         return logo_asset.pixmap
-
-    def _logo_has_meaningful_transparent_margins(self, tolerance: float = 2.0) -> bool:
-        visible_box = self._layer_visible_box("logo")
-        if visible_box is None:
-            return False
-        source = self._logo_source_image()
-        if source is not None:
-            src_w, src_h = source.size
-        else:
-            source_pixmap = self._logo_layout_source_pixmap()
-            if source_pixmap.isNull():
-                return False
-            src_w = source_pixmap.width()
-            src_h = source_pixmap.height()
-        if src_w <= 0 or src_h <= 0:
-            return False
-        left, top, right, bottom = visible_box
-        return any(
-            margin > tolerance
-            for margin in (
-                float(left),
-                float(top),
-                float(src_w) - float(right),
-                float(src_h) - float(bottom),
-            )
-        )
 
     def _render_logo_fit_candidate(
         self,
@@ -5435,6 +5821,41 @@ class ARPlusWindow(QMainWindow):
             return (-layer_w / 2, -layer_h)
         return (-layer_w / 2, -layer_h / 2)
 
+    def _rotate_character_render_for_export(
+        self,
+        rendered: Image.Image,
+        rotation_degrees: float,
+    ) -> tuple[Image.Image, tuple[float, float]]:
+        rendered_w, rendered_h = rendered.size
+        anchor_x = rendered_w / 2.0
+        anchor_y = float(rendered_h)
+        rotation = self._normalize_rotation_degrees(rotation_degrees)
+        if abs(rotation) < 0.01:
+            return rendered, (anchor_x, anchor_y)
+
+        half_w = max(anchor_x, rendered_w - anchor_x)
+        half_h = max(anchor_y, rendered_h - anchor_y)
+        radius = math.hypot(half_w, half_h)
+        side = max(8, int(math.ceil(radius * 2.0)) + 8)
+        center_x = side // 2
+        center_y = side // 2
+        paste_x = int(round(center_x - anchor_x))
+        paste_y = int(round(center_y - anchor_y))
+
+        canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        canvas.paste(rendered, (paste_x, paste_y), rendered.getchannel("A"))
+        rotated = canvas.rotate(
+            -rotation,
+            resample=Image.Resampling.BICUBIC,
+            expand=False,
+        )
+        bbox = self._alpha_bbox_for_pil_image(rotated)
+        if bbox is None:
+            return rotated, (float(center_x), float(center_y))
+        left, top, right, bottom = bbox
+        cropped = rotated.crop((int(left), int(top), int(right), int(bottom)))
+        return cropped, (float(center_x - left), float(center_y - top))
+
     def _enforce_logo_preset_layout(self, preset_id: str):
         if preset_id != "logo":
             return
@@ -5607,6 +6028,46 @@ class ARPlusWindow(QMainWindow):
     def _on_scale_changed(self, value: int):
         layer = self._selected_layer()
         self._layer_state(self.current_preset, layer)["transform"]["scale"] = value / 100
+        self._update_slider_value_labels()
+        self._schedule_live_preview_refresh()
+
+    def _normalize_rotation_degrees(self, value) -> float:
+        normalized = math.fmod(self._to_float(value, 0.0), 360.0)
+        if normalized <= -180.0:
+            normalized += 360.0
+        elif normalized > 180.0:
+            normalized -= 360.0
+        if abs(normalized) < 0.05:
+            return 0.0
+        return normalized
+
+    def _layer_supports_rotation(self, layer_id: str) -> bool:
+        return layer_id in CHARACTER_LAYERS
+
+    def _rotate_active_layer(self, delta_degrees: float):
+        layer = self._selected_layer()
+        if not self._layer_supports_rotation(layer):
+            return
+        self._push_undo_state()
+        transform = self._layer_state(self.current_preset, layer)["transform"]
+        current_rotation = self._normalize_rotation_degrees(transform.get("rotation", 0.0))
+        transform["rotation"] = self._normalize_rotation_degrees(current_rotation + delta_degrees)
+        self._refresh_preview()
+        self._sync_layer_controls()
+
+    def _on_rotation_changed(self, value: int):
+        layer = self._selected_layer()
+        if not self._layer_supports_rotation(layer):
+            if hasattr(self, "rotation_slider"):
+                self.rotation_slider.blockSignals(True)
+                self.rotation_slider.setValue(0)
+                self.rotation_slider.blockSignals(False)
+            if hasattr(self, "rotation_spin"):
+                self.rotation_spin.blockSignals(True)
+                self.rotation_spin.setValue(0)
+                self.rotation_spin.blockSignals(False)
+            return
+        self._layer_state(self.current_preset, layer)["transform"]["rotation"] = self._normalize_rotation_degrees(value)
         self._update_slider_value_labels()
         self._schedule_live_preview_refresh()
 
@@ -5798,21 +6259,61 @@ class ARPlusWindow(QMainWindow):
         for lid, btn in self.layer_buttons.items():
             btn.setEnabled(self._is_control_layer_available(self.current_preset, lid))
         layer_state = self._layer_state(self.current_preset, layer)
+        self.visible_check.blockSignals(True)
         self.visible_check.setChecked(layer_state["visible"])
-        self.opacity_slider.setValue(int(layer_state["opacity"] * 100))
-        self.scale_slider.setValue(int(layer_state["transform"]["scale"] * 100))
+        self.visible_check.blockSignals(False)
+        opacity_value = int(round(layer_state["opacity"] * 100))
+        self.opacity_slider.blockSignals(True)
+        self.opacity_slider.setValue(opacity_value)
+        self.opacity_slider.blockSignals(False)
+        if hasattr(self, "opacity_spin"):
+            self.opacity_spin.blockSignals(True)
+            self.opacity_spin.setValue(opacity_value)
+            self.opacity_spin.blockSignals(False)
+        scale_value = int(round(layer_state["transform"]["scale"] * 100))
+        self.scale_slider.blockSignals(True)
+        self.scale_slider.setValue(scale_value)
+        self.scale_slider.blockSignals(False)
+        if hasattr(self, "scale_spin"):
+            self.scale_spin.blockSignals(True)
+            self.scale_spin.setValue(scale_value)
+            self.scale_spin.blockSignals(False)
         has_available_layer = any(
             self._is_control_layer_available(self.current_preset, lid) for lid in CONTROL_LAYER_ORDER
         )
         self.visible_check.setEnabled(has_available_layer)
         self.opacity_slider.setEnabled(has_available_layer)
         self.scale_slider.setEnabled(has_available_layer)
+        if hasattr(self, "opacity_spin"):
+            self.opacity_spin.setEnabled(has_available_layer)
+        if hasattr(self, "scale_spin"):
+            self.scale_spin.setEnabled(has_available_layer)
+        if hasattr(self, "rotation_slider"):
+            rotation_value = int(
+                round(
+                    self._normalize_rotation_degrees(
+                        layer_state["transform"].get("rotation", 0.0)
+                    )
+                )
+            )
+            self.rotation_slider.blockSignals(True)
+            self.rotation_slider.setValue(rotation_value)
+            self.rotation_slider.blockSignals(False)
+        if hasattr(self, "rotation_spin"):
+            self.rotation_spin.blockSignals(True)
+            self.rotation_spin.setValue(rotation_value)
+            self.rotation_spin.blockSignals(False)
         if hasattr(self, "flip_horizontal_btn"):
             flip_allowed = has_available_layer and self._layer_supports_horizontal_flip(layer)
             self.flip_horizontal_btn.blockSignals(True)
             self.flip_horizontal_btn.setChecked(bool(layer_state["transform"].get("flip_x", False)))
             self.flip_horizontal_btn.blockSignals(False)
             self.flip_horizontal_btn.setEnabled(flip_allowed)
+        if hasattr(self, "rotation_slider"):
+            rotation_allowed = has_available_layer and self._layer_supports_rotation(layer)
+            self.rotation_slider.setEnabled(rotation_allowed)
+        if hasattr(self, "rotation_spin"):
+            self.rotation_spin.setEnabled(rotation_allowed)
         if hasattr(self, "center_layer_btn"):
             self.center_layer_btn.setEnabled(has_available_layer)
         if hasattr(self, "reset_layer_btn"):
@@ -5945,6 +6446,7 @@ class ARPlusWindow(QMainWindow):
                 return
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["anchor"] = "bottom"
+            layer_state["transform"]["rotation"] = 0.0
             layer_state["transform"]["x"] = width * 0.5
             layer_state["transform"]["scale"] = 1.0
             src_w = max(1, layer_pixmap.width())
@@ -5972,17 +6474,10 @@ class ARPlusWindow(QMainWindow):
             layer_state["fit_mode"] = "contain"
             if preset_id == "logo":
                 if layer_pixmap is not None and not layer_pixmap.isNull():
-                    target_scale = self._fit_logo_scale_to_canvas(width, height)
-                    if self._logo_has_meaningful_transparent_margins():
-                        layer_state["transform"]["anchor"] = "bottom_left_visible"
-                        layer_state["transform"]["scale"] = target_scale
-                        layer_state["transform"]["x"] = 0.0
-                        layer_state["transform"]["y"] = float(height)
-                    else:
-                        layer_state["transform"]["anchor"] = "bottom"
-                        layer_state["transform"]["scale"] = max(LOGO_PRESET_MIN_SCALE, target_scale)
-                        layer_state["transform"]["x"] = width * 0.5
-                        layer_state["transform"]["y"] = float(height)
+                    layer_state["transform"]["anchor"] = "bottom_left_visible"
+                    layer_state["transform"]["scale"] = self._fit_logo_scale_to_canvas(width, height)
+                    layer_state["transform"]["x"] = 0.0
+                    layer_state["transform"]["y"] = float(height)
                 else:
                     layer_state["transform"]["anchor"] = "center"
                     layer_state["transform"]["scale"] = 1.0
@@ -6019,6 +6514,7 @@ class ARPlusWindow(QMainWindow):
             self._request_presets_preview_refresh(preset_ids=[self.current_preset])
             if hasattr(self, "main_tabs") and hasattr(self, "top_workspace") and self.main_tabs.currentWidget() is self.top_workspace:
                 self.top_workspace.refresh_current_panel()
+            self._schedule_preview_canvas_feedback()
             return
 
         self.special_preset_item.setVisible(False)
@@ -6030,19 +6526,23 @@ class ARPlusWindow(QMainWindow):
             layer_state = self._layer_state(self.current_preset, layer)
             if not self._is_layer_allowed(self.current_preset, layer):
                 item.setVisible(False)
+                item.setRotation(0.0)
                 continue
             if not layer_state["visible"]:
                 item.setVisible(False)
+                item.setRotation(0.0)
                 continue
 
             pixmap = self._preview_pixmap(layer, canvas_w, canvas_h)
             if pixmap.isNull():
                 item.setVisible(False)
+                item.setRotation(0.0)
                 continue
 
             item.setVisible(True)
             item.setOpacity(layer_state["opacity"])
             item.setPixmap(pixmap)
+            item.setTransformOriginPoint(0.0, 0.0)
             anchor = layer_state["transform"].get("anchor", "center")
 
             if layer in CHARACTER_LAYERS:
@@ -6076,6 +6576,12 @@ class ARPlusWindow(QMainWindow):
                 )
                 item.setOffset(offset_x, offset_y)
                 item.setPos(pos_x, pos_y)
+            rotation = (
+                self._normalize_rotation_degrees(layer_state["transform"].get("rotation", 0.0))
+                if self._layer_supports_rotation(layer)
+                else 0.0
+            )
+            item.setRotation(rotation)
         preset_visual_state = self._layer_state(self.current_preset, PRESET_VISUAL_LAYER_ID)
         preset_visual_pixmap = self._preset_visual_preview_pixmap(self.current_preset, canvas_w, canvas_h)
         if (
@@ -6084,6 +6590,7 @@ class ARPlusWindow(QMainWindow):
             or not preset_visual_state["visible"]
         ):
             self.preset_visual_item.setVisible(False)
+            self.preset_visual_item.setRotation(0.0)
         else:
             self.preset_visual_item.setOpacity(preset_visual_state["opacity"])
             self.preset_visual_item.setPixmap(preset_visual_pixmap)
@@ -6092,11 +6599,13 @@ class ARPlusWindow(QMainWindow):
                 preset_visual_state["transform"]["x"],
                 preset_visual_state["transform"]["y"],
             )
+            self.preset_visual_item.setRotation(0.0)
             self.preset_visual_item.setVisible(True)
         self._refresh_poster_textbox_overlay(canvas_w, canvas_h)
         self._request_presets_preview_refresh(preset_ids=[self.current_preset])
         if hasattr(self, "main_tabs") and hasattr(self, "top_workspace") and self.main_tabs.currentWidget() is self.top_workspace:
             self.top_workspace.refresh_current_panel()
+        self._schedule_preview_canvas_feedback()
 
     def _top_template_image(self, preset_id: str):
         if preset_id in self.top_template_cache:
@@ -6245,13 +6754,19 @@ class ARPlusWindow(QMainWindow):
             if not layer_state["visible"]:
                 continue
 
-            rendered = self._render_layer_for_export(
+            rendered_result = self._render_layer_for_export(
                 layer,
                 source_preset_id,
                 canvas_w=canvas_w,
                 canvas_h=canvas_h,
                 resample=resample,
+                return_anchor=layer in CHARACTER_LAYERS,
             )
+            if layer in CHARACTER_LAYERS:
+                rendered, anchor_point = rendered_result
+            else:
+                rendered = rendered_result
+                anchor_point = None
             if rendered is None:
                 continue
 
@@ -6263,7 +6778,10 @@ class ARPlusWindow(QMainWindow):
                 anchor = layer_state["transform"].get("anchor", "center")
                 tx = layer_state["transform"]["x"] * pos_scale_x
                 ty = layer_state["transform"]["y"] * pos_scale_y
-                if anchor == "bottom_left_visible":
+                if layer in CHARACTER_LAYERS and anchor_point is not None:
+                    x = int(round(tx - anchor_point[0]))
+                    y = int(round(ty - anchor_point[1]))
+                elif anchor == "bottom_left_visible":
                     bbox = self._alpha_bbox_for_pil_image(rendered)
                     if bbox is None:
                         bbox_left = 0.0
@@ -6456,11 +6974,10 @@ class ARPlusWindow(QMainWindow):
     def _refresh_presets_preview_borders(self):
         if not hasattr(self, "preset_preview_labels"):
             return
+        tokens = self._theme_tokens()
         for preset_id, label in self.preset_preview_labels.items():
-            border_color = "#D78EF1" if preset_id == self.current_preset else "#5E5E66"
-            label.setStyleSheet(
-                f"border: 2px solid {border_color}; background-color: #1F1F24;"
-            )
+            border_color = tokens["accent"] if preset_id == self.current_preset else tokens["border"]
+            label.setStyleSheet(self._preset_preview_stylesheet(border_color))
 
     def _refresh_presets_preview_strip(self):
         if not hasattr(self, "preset_preview_labels"):
@@ -6483,6 +7000,7 @@ class ARPlusWindow(QMainWindow):
         if not self.preset_preview_queue:
             self._refresh_presets_preview_borders()
             return
+        tokens = self._theme_tokens()
         preset_id = self.preset_preview_queue.pop(0)
         label = self.preset_preview_labels.get(preset_id)
         if label is None:
@@ -6496,10 +7014,8 @@ class ARPlusWindow(QMainWindow):
                 label.setText("")
                 label.setPixmap(pixmap)
             self.preset_preview_dirty.discard(preset_id)
-            border_color = "#D78EF1" if preset_id == self.current_preset else "#5E5E66"
-            label.setStyleSheet(
-                f"border: 2px solid {border_color}; background-color: #1F1F24;"
-            )
+            border_color = tokens["accent"] if preset_id == self.current_preset else tokens["border"]
+            label.setStyleSheet(self._preset_preview_stylesheet(border_color))
         if self.preset_preview_queue:
             self.presets_preview_worker_timer.start(self.presets_preview_worker_interval_ms)
 
@@ -6639,10 +7155,21 @@ class ARPlusWindow(QMainWindow):
             return default
 
     def _update_slider_value_labels(self):
-        if hasattr(self, "opacity_value_label"):
-            self.opacity_value_label.setText(str(int(self.opacity_slider.value())))
-        if hasattr(self, "scale_value_label"):
-            self.scale_value_label.setText(str(int(self.scale_slider.value())))
+        if hasattr(self, "opacity_spin"):
+            self.opacity_spin.blockSignals(True)
+            self.opacity_spin.setValue(int(self.opacity_slider.value()))
+            self.opacity_spin.blockSignals(False)
+        if hasattr(self, "scale_spin"):
+            self.scale_spin.blockSignals(True)
+            self.scale_spin.setValue(int(self.scale_slider.value()))
+            self.scale_spin.blockSignals(False)
+        if hasattr(self, "rotation_spin"):
+            rotation_value = self._normalize_rotation_degrees(
+                self._layer_state(self.current_preset, self._selected_layer())["transform"].get("rotation", 0.0)
+            )
+            self.rotation_spin.blockSignals(True)
+            self.rotation_spin.setValue(int(round(rotation_value)))
+            self.rotation_spin.blockSignals(False)
 
     def _sync_poster_textbox_controls(self):
         if not hasattr(self, "poster_textbox_input"):
@@ -7027,6 +7554,7 @@ class ARPlusWindow(QMainWindow):
                         scaled_bottom_gap = item["bottom_gap"] * shrink_ratio
                         state["fit_mode"] = "contain"
                         state["transform"]["anchor"] = "bottom"
+                        state["transform"]["rotation"] = 0.0
                         state["transform"]["scale"] = max(
                             0.01,
                             item["base_scale"] * shrink_ratio,
@@ -7043,6 +7571,7 @@ class ARPlusWindow(QMainWindow):
             layer_state["fit_mode"] = "contain"
             layer_state["transform"]["x"] = (box_x + (box_w * 0.5)) - visible_center_offset_x
             layer_state["transform"]["anchor"] = "bottom"
+            layer_state["transform"]["rotation"] = 0.0
             layer_state["transform"]["scale"] = target_scale
             layer_state["transform"]["y"] = canvas_h + bottom_gap
             return True
@@ -7410,14 +7939,21 @@ class ARPlusWindow(QMainWindow):
                 resample=resample,
                 log_upscale=False,
             )
+            anchor_point = None
         else:
-            rendered = self._render_layer_for_export(
+            rendered_result = self._render_layer_for_export(
                 layer_id,
                 source_preset_id,
                 canvas_w=target_w,
                 canvas_h=target_h,
                 resample=resample,
+                return_anchor=layer_id in CHARACTER_LAYERS,
             )
+            if layer_id in CHARACTER_LAYERS:
+                rendered, anchor_point = rendered_result
+            else:
+                rendered = rendered_result
+                anchor_point = None
         if rendered is None:
             return None
         rendered_w, rendered_h = rendered.size
@@ -7444,15 +7980,15 @@ class ARPlusWindow(QMainWindow):
             anchor = layer_state["transform"].get("anchor", "center")
             tx = layer_state["transform"]["x"] * pos_scale_x
             ty = layer_state["transform"]["y"] * pos_scale_y
-            if anchor == "bottom_left_visible":
+            if layer_id in CHARACTER_LAYERS and anchor_point is not None:
+                origin_x = tx - anchor_point[0]
+                origin_y = ty - anchor_point[1]
+            elif anchor == "bottom_left_visible":
                 origin_x = tx - bbox_left
                 origin_y = ty - bbox_bottom
             else:
                 origin_x = tx - (rendered_w / 2.0)
                 origin_y = ty - (rendered_h / 2.0)
-            if layer_id in CHARACTER_LAYERS:
-                origin_x = tx - (rendered_w / 2.0)
-                origin_y = ty - rendered_h
 
         return (
             float(origin_x + bbox_left),
@@ -7674,12 +8210,16 @@ class ARPlusWindow(QMainWindow):
         canvas_w: int | None = None,
         canvas_h: int | None = None,
         resample=Image.Resampling.LANCZOS,
+        return_anchor: bool = False,
     ):
         if canvas_w is None or canvas_h is None:
             preset_meta = PRESETS[preset_id]
             canvas_w, canvas_h = preset_meta["size"]
         if layer_id == "gradient":
-            return self._build_gradient_image(canvas_w, canvas_h, preset_id)
+            rendered = self._build_gradient_image(canvas_w, canvas_h, preset_id)
+            if return_anchor:
+                return rendered, None
+            return rendered
 
         state = self._layer_state(preset_id, layer_id)
         fit_mode = state["fit_mode"]
@@ -7691,10 +8231,14 @@ class ARPlusWindow(QMainWindow):
             source = self.assets[layer_id].pil
 
         if source is None:
+            if return_anchor:
+                return None, None
             return None
 
         sw, sh = source.size
         if sw == 0 or sh == 0:
+            if return_anchor:
+                return None, None
             return None
 
         if fit_mode in {"cover", "crop"}:
@@ -7709,8 +8253,16 @@ class ARPlusWindow(QMainWindow):
         rendered = source.resize(target_size, resample)
         if bool(state["transform"].get("flip_x", False)) and self._layer_supports_horizontal_flip(layer_id):
             rendered = rendered.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        anchor_point = None
+        if self._layer_supports_rotation(layer_id):
+            rendered, anchor_point = self._rotate_character_render_for_export(
+                rendered,
+                self._to_float(state["transform"].get("rotation", 0.0), 0.0),
+            )
         if layer_id == "logo":
-            return self._apply_logo_shadow_pil(rendered)
+            rendered = self._apply_logo_shadow_pil(rendered)
+        if return_anchor:
+            return rendered, anchor_point
         return rendered
 
     def _load_logo_font(self, size: int | None = None):
