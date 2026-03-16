@@ -3206,10 +3206,19 @@ class ARPlusWindow(QMainWindow):
             pil_img = Image.open(file_path).convert("RGBA")
         except Exception:
             return None
-        pixmap = QPixmap(str(file_path))
+        pixmap = self._load_user_pixmap(file_path)
         if pixmap.isNull():
             return None
         return LayerAsset(path=str(file_path), pixmap=pixmap, pil=pil_img)
+
+    def _load_user_pixmap(self, file_path: str | Path) -> QPixmap:
+        pixmap = QPixmap(str(file_path))
+        if pixmap.isNull():
+            return pixmap
+        # Neutralize Qt HiDPI filename suffix handling such as "@2x" or "@3x".
+        # Imported media should keep its real pixel size regardless of the filename.
+        pixmap.setDevicePixelRatio(1.0)
+        return pixmap
 
     def _apply_selected_exports(self, selected_exports):
         if not hasattr(self, "export_checks"):
@@ -5830,7 +5839,7 @@ class ARPlusWindow(QMainWindow):
             QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir l'image: {exc}")
             return
 
-        pixmap = QPixmap(file_path)
+        pixmap = self._load_user_pixmap(file_path)
         if pixmap.isNull():
             self._log(f"Erreur import {layer_id}: pixmap invalide")
             return
